@@ -20,24 +20,28 @@ wasm = ["dep:wasm-bindgen"]
 mobile = ["dep:uniffi"]
 
 [dependencies]
-# Deps left at upstream defaults — `std` feature toggles are deferred to a
-# follow-up sub-PR within phase 1.2 once verifier-path source is no_std-clean.
-aes = "0.8.4"
+# Deps default-feature-off where the upstream offers a no_std-friendly subset of
+# what we use, so the verifier-only build under follow-up task #94 (1.2b2) can
+# target riscv32im. `std` opt-ins for the host build are layered back on via
+# the workspace `std` feature (see [features] above). Deps that genuinely need
+# their default features for our usage (e.g. `anyhow` formatter helpers) stay
+# at defaults; switching them is part of the #94 dep-audit.
+aes = "0.8.4"  # `default-features = false` deferred to #94 — strips `InvalidLength: std::error::Error` that `anyhow::Context` needs
 anyhow = "1"
-byteorder = "1.5.0"
+byteorder = "1.5.0"  # `default-features = false` deferred to #94 — flipping it strips ReadBytesExt/WriteBytesExt which the Codec trait still uses
 ciborium = "0.2.2"
 ciborium-ll = "0.2.2"
-crypto-common = "0.1.6"
-educe = { version = "0.6.0", features = ["Debug", "Clone", "Copy", "Hash", "Default"] }
+crypto-common = { version = "0.1.6", features = ["std"] }  # explicit `std` because flipping sha2/aes defaults dropped it from feature-unification, and `anyhow::Context` needs `InvalidLength: std::error::Error`
+educe = { version = "0.6.0", features = ["Debug", "Clone", "Copy", "Hash", "Default"] }  # `default-features = false` deferred to #94 — drops `PartialEq` derive used by SparseSumcheckArray
 getrandom = { version = "0.3.3", optional = true, features = ["wasm_js"] }
-hex = { version = "0.4.3" }
-num-bigint = "0.4.6"
-num-integer = "0.1.46"
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+num-bigint = { version = "0.4.6", default-features = false }
+num-integer = { version = "0.1.46", default-features = false }
 rand = { version = "0.9.2", optional = true }
-serde = { version = "1.0", features = ["derive"] }
-sha2 = "0.10.9"
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+sha2 = { version = "0.10.9", default-features = false }
 static_assertions = "1.1.0"
-subtle = { version = "2.6.1", features = ["const-generics"] }
+subtle = { version = "2.6.1", default-features = false, features = ["const-generics", "i128"] }
 uniffi = { version = "0.31.0", optional = true, features = ["cli"] }
 wasm-bindgen = { version = "0.2.106", optional = true }
 x509-cert = { version = "0.2.5", default-features = false, features = ["hazmat", "std"] }
