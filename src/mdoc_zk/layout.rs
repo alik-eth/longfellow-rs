@@ -429,13 +429,13 @@ pub(crate) struct EcdsaWitness<'a> {
 
 impl<'a> EcdsaWitness<'a> {
     /// Number of signature circuit input wires needed for ECDSA signature verification witnesses.
-    const LENGTH: usize = {
+    pub(crate) const LENGTH: usize = {
         5 // r_x, r_y, r_x inverse, s inverse, Q_x inverse
             + 8 // precomputed curve point sums for MSM lookup table
             + 256 + 255 * 3 // MSM intermediate values
     };
 
-    fn new(witnesses: &'a mut [FieldP256; EcdsaWitness::LENGTH]) -> Self {
+    pub(crate) fn new(witnesses: &'a mut [FieldP256; EcdsaWitness::LENGTH]) -> Self {
         // Unwrap safety: these calls will not panic because the input array length is statically
         // known, and we don't index past the end of it.
 

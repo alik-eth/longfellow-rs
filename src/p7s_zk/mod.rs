@@ -30,6 +30,8 @@
 //!     `fill_hash_public_inputs` / `push_*` mirrors).
 
 #[cfg(feature = "prover")]
+pub(crate) mod ecdsa_witness;
+#[cfg(feature = "prover")]
 pub(crate) mod invariants;
 pub mod layout;
 pub mod mac;
@@ -44,6 +46,8 @@ pub mod prover;
 pub mod public_inputs;
 #[cfg(feature = "prover")]
 pub(crate) mod sha256_witness;
+#[cfg(feature = "prover")]
+pub(crate) mod trust_anchors;
 pub mod verifier;
 pub mod witness;
 #[cfg(feature = "prover")]
