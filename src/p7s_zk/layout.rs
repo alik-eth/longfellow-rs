@@ -331,6 +331,56 @@ pub(crate) fn fill_sig_public_pre_mac(view: &mut SplitSigStatement<'_>, pub_: &P
     *view.trust_anchor_index = FieldP256::from_u128(u128::from(pub_.trust_anchor_index));
 }
 
+/// Write the post-commit MAC values + `av` challenge into the HASH-circuit
+/// public-input statement's MAC region. Each is a single native EltW
+/// (Field2_128 is 128 bits wide; v128 IS an EltW here). Mirrors C++
+/// `push_hash_mac_values` (p7s_zk.cc:2192).
+///
+/// Wire order:
+///   `mac_region[0..TOTAL_MAC_VALUES]` = mac values in `kMacMsgIdx*` order
+///   `mac_region[TOTAL_MAC_VALUES]`    = `av`
+pub(crate) fn fill_hash_mac_region(
+    view: &mut SplitHashStatement<'_>,
+    macs: &[Field2_128; super::mac::TOTAL_MAC_VALUES],
+    av: &Field2_128,
+) {
+    for i in 0..super::mac::TOTAL_MAC_VALUES {
+        view.mac_region[i] = macs[i];
+    }
+    view.mac_region[super::mac::TOTAL_MAC_VALUES] = *av;
+}
+
+/// Write the post-commit MAC values + `av` challenge into the SIG-circuit
+/// public-input statement's MAC region. Each `Field2_128` value is
+/// bit-decomposed LSB-first into 128 `FieldP256` wires (Fp256Base can't
+/// hold a 128-bit GF(2^128) element as one wire). Mirrors C++
+/// `push_sig_mac_values` (p7s_zk.cc:2200-2212).
+///
+/// Wire order:
+///   * 8 mac values × 128 bits = 1024 wires (LSB-first per v128)
+///   * 1 av × 128 bits          = 128 wires (LSB-first)
+///   * total = 1152 wires = SIG_MAC_INPUT_WIRES
+pub(crate) fn fill_sig_mac_region(
+    view: &mut SplitSigStatement<'_>,
+    macs: &[Field2_128; super::mac::TOTAL_MAC_VALUES],
+    av: &Field2_128,
+) {
+    let mut wire_idx = 0usize;
+    for mac in macs.iter() {
+        for bit in mac.iter_bits() {
+            view.mac_region[wire_idx] =
+                if bit { FieldP256::ONE } else { FieldP256::ZERO };
+            wire_idx += 1;
+        }
+    }
+    for bit in av.iter_bits() {
+        view.mac_region[wire_idx] =
+            if bit { FieldP256::ONE } else { FieldP256::ZERO };
+        wire_idx += 1;
+    }
+    debug_assert_eq!(wire_idx, SIG_MAC_INPUT_WIRES);
+}
+
 // ---------------------------------------------------------------------------
 // Bit-pushing primitives (mirror C++ push_v8 / push_uint / push_target)
 // ---------------------------------------------------------------------------
@@ -495,5 +545,69 @@ mod tests {
         let mut view = split_sig_statement(&mut buf);
         fill_sig_public_pre_mac(&mut view, &pub_);
         assert_eq!(buf[1], FieldP256::ZERO);
+    }
+
+    #[test]
+    fn fill_hash_mac_region_writes_macs_then_av() {
+        let mut buf: Vec<Field2_128> = vec![Field2_128::ZERO; HASH_PUB_TOTAL];
+        let macs: [Field2_128; super::super::mac::TOTAL_MAC_VALUES] = [
+            Field2_128::from_u128(11),
+            Field2_128::from_u128(12),
+            Field2_128::from_u128(13),
+            Field2_128::from_u128(14),
+            Field2_128::from_u128(15),
+            Field2_128::from_u128(16),
+            Field2_128::from_u128(17),
+            Field2_128::from_u128(18),
+        ];
+        let av = Field2_128::from_u128(99);
+        let mut view = split_hash_statement(&mut buf);
+        fill_hash_mac_region(&mut view, &macs, &av);
+        for i in 0..super::super::mac::TOTAL_MAC_VALUES {
+            assert_eq!(buf[HASH_MAC_INDEX + i], macs[i]);
+        }
+        assert_eq!(
+            buf[HASH_MAC_INDEX + super::super::mac::TOTAL_MAC_VALUES],
+            av
+        );
+    }
+
+    #[test]
+    fn fill_sig_mac_region_bit_decomposes_lsb_first() {
+        let mut buf: Vec<FieldP256> = vec![FieldP256::ZERO; SIG_PUB_TOTAL];
+        // Single non-zero mac value at slot 0 = 0x05 = 0b101 → bits (LSB-first)
+        // 1, 0, 1, 0, 0, 0, ...
+        let mut macs = [Field2_128::ZERO; super::super::mac::TOTAL_MAC_VALUES];
+        macs[0] = Field2_128::from_u128(0x05);
+        let av = Field2_128::ZERO;
+        let mut view = split_sig_statement(&mut buf);
+        fill_sig_mac_region(&mut view, &macs, &av);
+        // mac[0] occupies wires [SIG_MAC_INDEX .. SIG_MAC_INDEX+128).
+        let base = SIG_MAC_INDEX;
+        assert_eq!(buf[base + 0], FieldP256::ONE);
+        assert_eq!(buf[base + 1], FieldP256::ZERO);
+        assert_eq!(buf[base + 2], FieldP256::ONE);
+        for j in 3..128 {
+            assert_eq!(buf[base + j], FieldP256::ZERO, "bit {j} should be zero");
+        }
+        // Remaining 7 macs + av all zero → all subsequent wires zero.
+        for j in 128..SIG_MAC_INPUT_WIRES {
+            assert_eq!(buf[base + j], FieldP256::ZERO);
+        }
+    }
+
+    #[test]
+    fn fill_sig_mac_region_av_lands_after_eight_macs() {
+        let mut buf: Vec<FieldP256> = vec![FieldP256::ZERO; SIG_PUB_TOTAL];
+        let macs = [Field2_128::ZERO; super::super::mac::TOTAL_MAC_VALUES];
+        let av = Field2_128::from_u128(0x01); // bit 0 set
+        let mut view = split_sig_statement(&mut buf);
+        fill_sig_mac_region(&mut view, &macs, &av);
+        // av occupies wires [SIG_MAC_INDEX + 8*128 .. SIG_MAC_INDEX + 9*128).
+        let av_base = SIG_MAC_INDEX + super::super::mac::TOTAL_MAC_VALUES * 128;
+        assert_eq!(buf[av_base + 0], FieldP256::ONE);
+        for j in 1..128 {
+            assert_eq!(buf[av_base + j], FieldP256::ZERO);
+        }
     }
 }

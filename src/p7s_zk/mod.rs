@@ -30,6 +30,7 @@
 //!     `fill_hash_public_inputs` / `push_*` mirrors).
 
 pub mod layout;
+pub mod mac;
 pub mod params;
 pub mod parser;
 #[cfg(feature = "prover")]
