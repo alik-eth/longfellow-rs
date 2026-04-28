@@ -7,6 +7,7 @@ use anyhow::{Context, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num_bigint::BigUint;
 use num_integer::Integer;
+#[cfg(feature = "prover")]
 use rand::RngCore;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -107,6 +108,7 @@ pub trait CodecFieldElement:
     }
 
     /// Generate a field element by rejection sampling.
+    #[cfg(feature = "prover")]
     fn sample() -> Self {
         let mut buffer = vec![0; Self::num_bytes()];
         let mut rng = rand::rng();
@@ -280,6 +282,7 @@ pub trait ProofFieldElement: CodecFieldElement {
     fn extend(nodes: &[Self], context: &Self::ExtendContext) -> Vec<Self>;
 }
 
+#[cfg(feature = "prover")]
 pub fn field_element_iter<FE: CodecFieldElement>() -> impl Iterator<Item = FE> {
     let mut buffer = vec![0; FE::num_bytes()];
     let mut rng = rand::rng();

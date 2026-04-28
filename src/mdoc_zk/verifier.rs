@@ -14,7 +14,7 @@ use anyhow::{Context, anyhow};
 use std::borrow::Cow;
 
 /// Zero-knowledge verifier for mdoc credential presentations.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Object))]
+#[cfg_attr(feature = "mobile", derive(uniffi::Object))]
 pub struct MdocZkVerifier {
     circuit_version: CircuitVersion,
     num_attributes: usize,
@@ -175,7 +175,7 @@ impl MdocZkVerifier {
 ///
 /// This represents the verifier's view of a selectively disclosed attribute, with ergonomic
 /// handling of the element identifier as a `String`.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "mobile", derive(uniffi::Record))]
 pub struct Attribute {
     /// Attribute identifier.
     pub identifier: String,

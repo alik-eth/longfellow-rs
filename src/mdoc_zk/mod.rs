@@ -25,6 +25,7 @@ use std::{
     borrow::Cow,
     io::{Cursor, Write},
 };
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
 mod bit_plucker;
@@ -37,8 +38,8 @@ pub mod verifier;
 
 /// Versions of the mdoc_zk circuit interface.
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
-#[wasm_bindgen]
+#[cfg_attr(feature = "mobile", derive(uniffi::Enum))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub enum CircuitVersion {
     V6 = 6,
     V7 = 7,

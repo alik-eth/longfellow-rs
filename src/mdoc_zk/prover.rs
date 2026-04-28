@@ -12,13 +12,15 @@ use crate::{
     witness::Witness,
 };
 use anyhow::anyhow;
+#[cfg(feature = "prover")]
 use rand::RngCore;
 use std::io::Cursor;
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
 /// Zero-knowledge prover for mdoc credential presentations.
-#[wasm_bindgen]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Object))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
+#[cfg_attr(feature = "mobile", derive(uniffi::Object))]
 pub struct MdocZkProver {
     circuit_version: CircuitVersion,
     num_attributes: usize,

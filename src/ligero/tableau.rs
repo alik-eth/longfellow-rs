@@ -11,6 +11,7 @@ use crate::{
     sumcheck::constraints::QuadraticConstraint,
     witness::Witness,
 };
+#[cfg(feature = "prover")]
 use rand::{RngCore, random};
 use sha2::{Digest, Sha256};
 
@@ -160,6 +161,7 @@ pub struct Tableau<FieldElement> {
 
 impl<FE: ProofFieldElement> Tableau<FE> {
     /// Build the tableau.
+    #[cfg(feature = "prover")]
     pub fn build(
         ligero_parameters: LigeroParameters,
         witness: &Witness<FE>,
@@ -340,6 +342,7 @@ impl<FE: ProofFieldElement> Tableau<FE> {
 
     /// Commit to the contents of the tableau, returning a Merkle tree whose leaves are hashes of
     /// the columns. A nonce is hashed into each leaf.
+    #[cfg(feature = "prover")]
     pub fn commit(&self) -> Result<MerkleTree, anyhow::Error> {
         self.commit_with_merkle_tree_nonce_generator(|| Nonce(random::<[u8; 32]>()))
     }
