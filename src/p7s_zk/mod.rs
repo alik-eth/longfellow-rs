@@ -33,6 +33,8 @@
 pub(crate) mod invariants;
 pub mod layout;
 pub mod mac;
+#[cfg(feature = "prover")]
+pub(crate) mod mac_witness;
 pub mod params;
 pub mod parser;
 #[cfg(feature = "prover")]
