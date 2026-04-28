@@ -18,7 +18,7 @@ use longfellow::{
     circuit::Circuit,
     fields::{field2_128::Field2_128, fieldp256::FieldP256},
     io::Cursor,
-    p7s_zk::default_ligero_params_for_circuit,
+    p7s_zk::{default_ligero_params_for_circuit, parse_public_blob, parse_witness_blob},
 };
 use std::path::PathBuf;
 
@@ -289,6 +289,120 @@ fn mdoc_v6_v7_witness_metadata_json_parses() {
     let v: serde_json::Value =
         serde_json::from_slice(&bytes).expect("witness metadata JSON must be valid");
     assert!(!v.is_null(), "metadata JSON must not be null");
+}
+
+// ============================================================================
+// v12 blob-byte fixtures (Task #97).
+// ============================================================================
+//
+// Static blobs at `crates/longfellow/tests/fixtures/p7s/blobs/` produced
+// one-shot by `cargo run --release --example dump_v12_blobs -p
+// zk-eidas-p7s-circuit` over the canonical TestAnchorA v12 source
+// (`testanchor-a-binding-v12.qkb.p7s`). These are the byte format the
+// Rust p7s_zk parsers (`parse_witness_blob` / `parse_public_blob`)
+// consume — round-trip verifies my parser shipped in #71 actually
+// accepts production-shape bytes from the existing Rust host pipeline.
+//
+// Single-source coverage: the v12 blob format is fully determined by
+// (qkb_source, holder_seed, context_bytes). The workspace currently
+// has only ONE v12-shape `.qkb.p7s` source (testanchor-a) with a
+// hardcoded `holder_seed_commit` valid only for `holder_seed = [0x42;
+// 32]`. The binding JSON's `context` is also hardcoded ("0x"), so
+// `compute_outputs` rejects mismatching context. Net result: one valid
+// (witness, public) blob triplet from this source. Multi-fixture
+// coverage requires extending `gen_v12_fixture` in zk-eidas-p7s to
+// produce additional v12-shape sources with varying holder_seed /
+// stable_id / timestamp — separate task; #97 ships the one canonical
+// pair plus parser-roundtrip verification.
+
+#[test]
+fn v12_witness_blob_parses_via_p7s_zk_parser() {
+    let path = fixture_path("p7s/blobs/testanchor_a_v12_witness.bin");
+    let bytes =
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read v12 witness blob {path:?}: {e}"));
+    // Minimal sanity floor: real v12 witness is ~5 KB.
+    assert!(
+        bytes.len() >= 4096,
+        "v12 witness blob too small: {} bytes",
+        bytes.len()
+    );
+
+    let parsed = parse_witness_blob(&bytes)
+        .unwrap_or_else(|e| panic!("v12 witness blob must round-trip parse: {e}"));
+
+    // Pinned via `gen_v12_fixture.rs`'s deterministic seeds: holder_seed
+    // = [0x42; 32], context = "0x", trust_anchor_index = 0 (TestAnchorA).
+    assert_eq!(
+        parsed.holder_seed,
+        [0x42u8; 32],
+        "holder_seed mismatch — fixture regenerated with different seed?"
+    );
+    assert_eq!(parsed.trust_anchor_index, 0, "trust_anchor_index must be 0 (TestAnchorA)");
+    assert_eq!(parsed.context_len, 2, "context bytes are b\"0x\" → len 2");
+    assert!(parsed.cert_tbs_len > 0, "cert_tbs must have content");
+    assert!(parsed.signed_attrs_len > 0, "signed_attrs must have content");
+}
+
+#[test]
+fn v12_public_blob_parses_via_p7s_zk_parser() {
+    let path = fixture_path("p7s/blobs/testanchor_a_v12_public.bin");
+    let bytes =
+        std::fs::read(&path).unwrap_or_else(|e| panic!("read v12 public blob {path:?}: {e}"));
+    assert_eq!(
+        bytes.len(),
+        233,
+        "v12 public blob is exactly 233 bytes (4 schema + 32 ctx_hash + 65 pk + 32 nonce + 32 nullifier + 32 enroll_commit + 32 enroll_nullifier + 4 trust_anchor_index)"
+    );
+
+    let parsed = parse_public_blob(&bytes)
+        .unwrap_or_else(|e| panic!("v12 public blob must round-trip parse: {e}"));
+
+    assert_eq!(parsed.trust_anchor_index, 0, "trust_anchor_index must be 0");
+    // The public blob's nullifier / enroll_commit / enroll_nullifier are
+    // SHA-256 outputs derived from holder_seed + stable_id + context;
+    // they're non-zero by virtue of SHA-256's output distribution. Pin
+    // their non-zeroness as a sanity check.
+    assert_ne!(
+        parsed.nullifier,
+        [0u8; 32],
+        "nullifier should not be all-zero"
+    );
+    assert_ne!(
+        parsed.enroll_commit,
+        [0u8; 32],
+        "enroll_commit should not be all-zero"
+    );
+    assert_ne!(
+        parsed.enroll_nullifier,
+        [0u8; 32],
+        "enroll_nullifier should not be all-zero"
+    );
+}
+
+#[test]
+fn v12_blob_pair_cross_consistent() {
+    // Cross-check: the witness blob's holder_seed + stable_id uniquely
+    // determine enroll_commit and enroll_nullifier in the public blob
+    // (per `enroll_commit_v12` / `enroll_nullifier_v12` definitions
+    // in zk-eidas-p7s::lib). Verify the relationship holds against the
+    // committed pair.
+    use sha2::{Digest, Sha256};
+
+    let wit = std::fs::read(fixture_path("p7s/blobs/testanchor_a_v12_witness.bin")).unwrap();
+    let pub_ = std::fs::read(fixture_path("p7s/blobs/testanchor_a_v12_public.bin")).unwrap();
+
+    let parsed_w = parse_witness_blob(&wit).unwrap();
+    let parsed_p = parse_public_blob(&pub_).unwrap();
+
+    // enroll_commit = SHA-256(0x03 || holder_seed[32]).
+    let mut hasher = Sha256::new();
+    hasher.update([0x03u8]);
+    hasher.update(parsed_w.holder_seed);
+    let expected_enroll_commit: [u8; 32] = hasher.finalize().into();
+    assert_eq!(
+        parsed_p.enroll_commit, expected_enroll_commit,
+        "enroll_commit must equal SHA-256(0x03 || holder_seed)"
+    );
 }
 
 // ============================================================================

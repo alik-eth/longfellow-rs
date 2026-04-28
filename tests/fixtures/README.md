@@ -13,12 +13,15 @@ tests. Used by:
 fixtures/
 ├── README.md                              ← this file
 └── p7s/
-    ├── testanchor-a-binding-v12.qkb.p7s   ← v12 anchor-A synthetic
+    ├── testanchor-a-binding-v12.qkb.p7s   ← v12 anchor-A synthetic source
     ├── testanchor-b-binding.qkb.p7s       ← v11 anchor-B synthetic
     ├── testanchor-b-admin-binding.qkb.p7s ← v11 anchor-B admin variant
     ├── binding.qkb.p7s                    ← v11 DIIA real signer
     ├── admin-binding.qkb.p7s              ← v11 DIIA admin variant
     ├── kat-subject-serial.json            ← X.520 serialNumber KAT JSON
+    ├── blobs/                             ← v12 witness/public blob bytes (#97)
+    │   ├── testanchor_a_v12_witness.bin   ← 5150 B; parses via p7s_zk
+    │   └── testanchor_a_v12_public.bin    ← 233 B; parses via p7s_zk
     └── reference/
         ├── czo-test-testsigner.p7s        ← CZO QTSP reference signer
         └── hu-microsec-mic-1.p7s          ← Hungarian Microsec reference
@@ -56,22 +59,38 @@ is constructed in-memory from the V6/V7 circuit-binary fixtures above
 plus runtime-built witnesses. "v11/v12" in this workspace's vocabulary
 refer to the *p7s blob schema versions*, not mdoc — orthogonal axis.
 
-### v12 *blob-byte* fixtures (the format `parse_witness_blob` /
-### `parse_public_blob` consume)
+### v12 *blob-byte* fixtures (the format `parse_witness_blob` / `parse_public_blob` consume)
 
-The `.qkb.p7s` files in this directory are **raw CAdES-BES CMS
-SignedData documents** — the upstream input to v12 blob construction.
-The `parse_witness_blob` / `parse_public_blob` functions in
-`crates/longfellow/src/p7s_zk/parser.rs` consume v12 *blob* bytes
-(4-byte schema + parsed structure with `cert_tbs` + offsets +
-`holder_seed_commit` + `holder_seed`). Producing those blobs from a
-`.qkb.p7s` requires running
-`crates/zk-eidas-p7s::build_witness(qkb_bytes, context, root_pk,
-holder_seed)` — i.e. the existing host pipeline that constructs
-witnesses at test runtime.
+**Shipped under `p7s/blobs/`** as of #97 (one canonical TestAnchorA
+witness/public pair). The `.qkb.p7s` files in this directory are still
+the upstream raw CAdES-BES CMS source; the blobs are what falls out of
+running `zk-eidas-p7s::build_witness(qkb_bytes, context, root_pk,
+holder_seed)` + `Witness::to_ffi_bytes()` /
+`PublicInputs::to_ffi_bytes()`.
 
-Static blob-byte fixtures will land alongside #95 (the `build_witness`
-Rust port). Tracked in #97. See the project task list.
+**Single-source coverage.** The workspace currently has only ONE v12-
+shape `.qkb.p7s` source (`testanchor-a-binding-v12.qkb.p7s`) whose
+binding JSON contains a `holder_seed_commit` matching `holder_seed =
+[0x42; 32]`. The `context` field is also hardcoded ("0x") and
+`compute_outputs` rejects mismatching contexts. So the (witness, public)
+blob triplet under `blobs/` is uniquely determined by that source.
+Multi-fixture v12 coverage requires extending `gen_v12_fixture.rs` in
+`zk-eidas-p7s` to produce additional v12 sources with varying
+holder_seed / stable_id / timestamp — separate task, not scoped here.
+
+#### Regenerating
+
+Run the existing example, output goes to `/tmp/p7s_v12_*.bin`:
+
+```sh
+cargo run --release --example dump_v12_blobs -p zk-eidas-p7s-circuit
+cp /tmp/p7s_v12_witness.bin   crates/longfellow/tests/fixtures/p7s/blobs/testanchor_a_v12_witness.bin
+cp /tmp/p7s_v12_public.bin    crates/longfellow/tests/fixtures/p7s/blobs/testanchor_a_v12_public.bin
+```
+
+The blob output is byte-deterministic: same `(.qkb.p7s, holder_seed,
+context)` always produces identical bytes. Running the regen twice
+yields no `git diff`.
 
 ### Pre-compiled p7s circuit bytes
 
