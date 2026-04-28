@@ -18,6 +18,7 @@ pub mod io;
 pub mod js_api;
 pub mod ligero;
 pub mod mdoc_zk;
+pub mod p7s_zk;
 pub mod sumcheck;
 #[cfg(test)]
 pub mod test_vector;
