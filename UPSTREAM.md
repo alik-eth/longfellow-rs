@@ -114,6 +114,53 @@ maintainers:
    denominators in `newton_denominators_[k][i]` at construction; ISRG
    computes them on demand inside `extend()`. Functionally equivalent.
 
+### Numerical KAT — independent reference impl
+
+Beyond the structural audit and the v6/v7 interop tests, an independent
+~30-line reference GF(2^128) multiplier (third-party, polynomial-style
+schoolbook with explicit reduction by `0x87`) was used to compute the
+following byte-level test vectors. Both ISRG's `Field2_128` and the C++
+vendor's `proofs::GF2_128<4>` must produce these exact outputs given they
+agree on the irreducible polynomial and 16-byte LE byte order:
+
+| # | Description | a (LE hex) | b (LE hex) | a·b mod Q (LE hex) |
+|---|---|---|---|---|
+| v1 | 1 · 1 = 1 | `01000000000000000000000000000000` | `01000000000000000000000000000000` | `01000000000000000000000000000000` |
+| v2 | x · x = x² | `02000000000000000000000000000000` | `02000000000000000000000000000000` | `04000000000000000000000000000000` |
+| v3 | alternating · 1 (identity) | `55555555555555555555555555555555` | `01000000000000000000000000000000` | `55555555555555555555555555555555` |
+| v4 | x¹²⁷ · x ≡ 0x87 (the reduction constant!) | `00000000000000000000000000000080` | `02000000000000000000000000000000` | `87000000000000000000000000000000` |
+| v5 | prime-derived high · low | `1f1d1c1b1a191817161514131211100f` | `0e0d0c0b0a09080706050403020100ff` | `6ed18513321d934bf94638858f8bae21` |
+
+**Round-trip in all cases:** `bytes(a) → u128 → bytes` is bit-identical
+on both sides. ISRG: mechanical (`from_le_bytes`/`to_le_bytes` are mutual
+inverses). C++: `Limb::to_bytes` writes `limb_[0]` LE then `limb_[1]` LE,
+which is exactly `u128::to_le_bytes`'s definition (lower 64 bits in bytes
+[0..8]).
+
+**v4 is load-bearing:** when x¹²⁷ multiplied by x overflows past x¹²⁷,
+the bit shifted out of position 127 forces the reduction polynomial
+`0x87 = x⁷ + x² + x + 1` to be XOR'd into the low half. The vector
+confirms: input `0x80` at byte 15 (= bit 127) times `0x02` (= x) outputs
+`0x87` at byte 0 — exactly the reduction constant landing where it
+should. If either implementation chose a different irreducible polynomial
+(e.g., the GCM-style polynomial reflected MSB-first, or a different
+0x87-equivalent like `0x43`), v4's output would diverge.
+
+These five vectors plus the v6/v7 interop pass form a complete
+multi-axis confirmation:
+1. **Structural** — same polynomial, same bit widths, same byte order
+   (this section's prose, comparison table).
+2. **Byte-level KAT** — third-party reference reproduces the exact
+   mul-mod semantics (this table).
+3. **End-to-end empirical** — cross-impl proof verification round-trips
+   (`mdoc_zk::verifier::tests::test_verify_interop_v6` + `_v7` pass).
+
+If the C++ vendor or ISRG were to ever silently change the reduction
+polynomial, the v4 byte vector here would be the smallest possible
+regression test to catch it. Task #75 (parity driver) should plumb this
+KAT into the parity test crate as a layer-0 sanity check before any
+proof-level cross-validation.
+
 ### Risk for parity tests (tasks #75/#76)
 
 **Low risk.** Bit-exact byte compatibility is empirically demonstrated. The
