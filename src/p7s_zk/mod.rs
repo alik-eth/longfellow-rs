@@ -36,6 +36,8 @@ pub mod mac;
 pub mod params;
 pub mod parser;
 #[cfg(feature = "prover")]
+pub(crate) mod preimages;
+#[cfg(feature = "prover")]
 pub mod prover;
 pub mod public_inputs;
 #[cfg(feature = "prover")]
