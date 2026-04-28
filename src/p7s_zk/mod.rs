@@ -29,6 +29,8 @@
 //!     bytes, public-input wire-layout extraction (the
 //!     `fill_hash_public_inputs` / `push_*` mirrors).
 
+#[cfg(feature = "prover")]
+pub(crate) mod invariants;
 pub mod layout;
 pub mod mac;
 pub mod params;
