@@ -30,8 +30,10 @@
 //!     `fill_hash_public_inputs` / `push_*` mirrors).
 
 pub mod layout;
+pub mod parser;
 pub mod public_inputs;
 pub mod witness;
 
+pub use parser::{parse_public_blob, parse_witness_blob};
 pub use public_inputs::ParsedPublic;
 pub use witness::ParsedWitness;
