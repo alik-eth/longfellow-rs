@@ -1,0 +1,79 @@
+[package]
+name = "longfellow"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+
+[features]
+uniffi = ["dep:uniffi"]
+
+[dependencies]
+aes = "0.8.4"
+anyhow = "1"
+byteorder = "1.5.0"
+ciborium = "0.2.2"
+ciborium-ll = "0.2.2"
+crypto-common = "0.1.6"
+educe = { version = "0.6.0", features = ["Debug", "Clone", "Copy", "Hash", "Default"] }
+getrandom = { version = "0.3.3", features = ["wasm_js"] }
+hex = { version = "0.4.3" }
+num-bigint = "0.4.6"
+num-integer = "0.1.46"
+rand = "0.9.2"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10.9"
+static_assertions = "1.1.0"
+subtle = { version = "2.6.1", features = ["const-generics"] }
+uniffi = { version = "0.31.0", optional = true, features = ["cli"] }
+wasm-bindgen = "0.2.106"
+x509-cert = { version = "0.2.5", default-features = false, features = ["hazmat", "std"] }
+zstd = "0.13.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = { version = "0.8.0", features = ["html_reports"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+criterion = { version = "0.8.0", default-features = false }
+
+[dev-dependencies]
+assert_matches = "1.5.0"
+git-version = "0.3.9"
+hex = { version = "0.4.3", features = ["serde"] }
+hex-literal = "1.1.0"
+num-traits = "0.2.19"
+rand_chacha = "0.9.0"
+serde_json = "1.0"
+serde_test = "1.0.177"
+sha2 = "0.10.9"
+wasm-bindgen-test = "0.3"
+
+[[bench]]
+name = "extend"
+harness = false
+
+[[bench]]
+name = "field"
+harness = false
+
+[[bench]]
+name = "longfellow_one_field"
+harness = false
+
+[[bench]]
+name = "mdoc_zk"
+harness = false
+
+[[bench]]
+name = "ntt"
+harness = false
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["uniffi"]
+
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[profile.release]
+lto = true

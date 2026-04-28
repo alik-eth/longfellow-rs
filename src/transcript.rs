@@ -1,0 +1,691 @@
+//! Implements a transcript of prover messages, used to apply the Fiat-Shamir transform to an
+//! interactive protocol.
+//!
+//! <https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3>
+
+use crate::{Sha256Digest, circuit::Circuit, fields::CodecFieldElement, sumcheck::Polynomial};
+use aes::{
+    Aes256,
+    cipher::{BlockEncrypt, KeyInit},
+};
+use anyhow::Context;
+use crypto_common::{BlockSizeUser, generic_array::GenericArray};
+use sha2::{Digest, Sha256};
+use std::{cmp::min, fmt::Debug};
+
+/// A transcript of the prover's execution of a protocol, used to generate the verifier's public
+/// coin challenges based on the state of the transcript at some moment.
+#[derive(Clone, Debug)]
+pub struct Transcript {
+    /// Domain separation tag configuration.
+    mode: TranscriptMode,
+    /// Accumulated hash of messages written to the transcript, used as the seed to
+    /// [`FiatShamirPseudoRandomFunction`] to generate verifier challenges.
+    fsprf_seed: Sha256,
+    /// An FSPRF, seeded with the transcript up to some point.
+    current_fsprf: Option<FiatShamirPseudoRandomFunction>,
+}
+
+/// Tag written to the transcript to identify message type.
+///
+/// The values used in [longfellow-zk][1] disagree with those in [draft-google-cfrg-libzk-01][2]. In
+/// this implementation we aim to interop with longfellow-zk, so we use its values.
+///
+/// [1]: https://github.com/google/longfellow-zk/blob/7a329b35b846fa5b9eca6f0143d0197a73e126a2/lib/random/transcript.h#L71
+/// [2]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.1.2
+enum Tag {
+    ByteArray,
+    FieldElement,
+    FieldElementArray,
+}
+
+impl Tag {
+    fn as_byte(&self, mode: TranscriptMode) -> u8 {
+        match (self, mode) {
+            (Tag::ByteArray, _) => 0,
+            (Tag::FieldElement, _) => 1,
+            (Tag::FieldElementArray, TranscriptMode::Normal) => 2,
+            // Even in longfellow-zk, this should be 2, but when they run some of their tests they
+            // use version = 3 which evidently had a bug where field element arrays are incorrectly
+            // tagged.
+            (Tag::FieldElementArray, TranscriptMode::V3Compatibility) => 1,
+        }
+    }
+}
+
+impl Transcript {
+    /// Initialize a transcript.
+    ///
+    /// The specification is not clear about what `session_id` is, but in the C++ implementation,
+    /// it's an opaque byte buffer ([1]).
+    /// Initialize a transcript with the session ID, which is the SHA-256 digest of the circuit.
+    ///
+    /// <https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3.1.1>
+    ///
+    /// [1]: https://github.com/google/longfellow-zk/blob/87474f308020535e57a778a82394a14106f8be5b/lib/random/transcript.h#L76
+    pub fn new(session_id: &[u8], mode: TranscriptMode) -> Result<Self, anyhow::Error> {
+        let mut transcript = Self {
+            mode,
+            fsprf_seed: Sha256::new(),
+            current_fsprf: None,
+        };
+
+        // Initialize the transcript with the session ID
+        transcript.write_byte_array(session_id)?;
+
+        Ok(transcript)
+    }
+
+    /// Generate bindings for the output wires of a circuit.
+    pub fn generate_output_wire_bindings<FE: CodecFieldElement>(
+        &mut self,
+        circuit: &Circuit<FE>,
+    ) -> Result<Vec<FE>, anyhow::Error> {
+        // longfellow-zk allocates two 40 element arrays and then re-uses them for each layer's
+        // bindings. This saves allocations, but you have to keep track of the current length of the
+        // bindings when calling SumcheckArray::bind. We could probably simulate that by taking a
+        // &mut [FE] from a Vec<FE>?
+        // However this optimization also introduces a bug: their TranscriptSumcheck::begin_layer
+        // samples enough elements from the FSPRF to fill the array _up to its allocated size_,
+        // regardless of the number of output wires. This means the FSPRF gets fast-forwarded by
+        // 80 - circuit.logw, and since no writes occur between this point and when we next
+        // sample field elements, that affects the rest of the protocol run. In order to be
+        // compatible with their test vector, we generate and discard an equal number of field
+        // elements.
+        // https://github.com/google/longfellow-zk/issues/71
+        // longfellow-zk first samples 40 elements for bindings used for circuit copies, a feature
+        // which did not make it into the specification or our implementation. Thus these field
+        // elements are never used anywhere.
+        const LONGFELLOW_ZK_MAX_BINDINGS: usize = 40;
+        self.generate_challenge::<FE>(LONGFELLOW_ZK_MAX_BINDINGS)?;
+        // The spec says to generate "circuit.lv" field elements, which I think has to mean the
+        // number of bits needed to describe an output wire, because the idea is that binding to
+        // challenges of this length will reduce the 3D quad down to 2D.
+        let output_wire_bindings = self.generate_challenge(circuit.logw())?;
+        // longfellow-zk then samples 40 more elements to fill G[0]. We already sampled enough to
+        // fill its actual size, so fast-forward the FSPRF to catch up to longfellow-zk.
+        self.generate_challenge::<FE>(LONGFELLOW_ZK_MAX_BINDINGS - circuit.logw())?;
+
+        Ok(output_wire_bindings)
+    }
+
+    /// Write a field element to the transcript.
+    ///
+    /// <https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3.1.2>
+    pub fn write_field_element<FE: CodecFieldElement>(
+        &mut self,
+        field_element: &FE,
+    ) -> Result<(), anyhow::Error> {
+        // Write tag for a single field element
+        self.write_bytes(&[Tag::FieldElement.as_byte(self.mode)])?;
+
+        // Write field element
+        self.write_bytes(field_element.as_byte_array()?.as_ref())?;
+
+        Ok(())
+    }
+
+    pub fn write_field_element_array<FE: CodecFieldElement>(
+        &mut self,
+        field_elements: &[FE],
+    ) -> Result<(), anyhow::Error> {
+        // Length prefix is 8 bytes, so reject slices that are too big
+        let length = u64::try_from(field_elements.len())
+            .context("field element array too big for transcript")?;
+
+        // Write tag for field element array
+        self.write_bytes(&[Tag::FieldElementArray.as_byte(self.mode)])?;
+
+        // Write length of array as little endian bytes
+        self.write_bytes(&length.to_le_bytes())?;
+
+        // Write array
+        for field_element in field_elements {
+            self.write_bytes(field_element.as_byte_array()?.as_ref())?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a slice of bytes to the transcript.
+    ///
+    /// <https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-3.1.2>
+    pub fn write_byte_array(&mut self, bytes: &[u8]) -> Result<(), anyhow::Error> {
+        self.begin_write_byte_array(bytes.len())?;
+
+        // Write array
+        self.write_bytes(bytes)?;
+
+        Ok(())
+    }
+
+    /// Write a [`Polynomial`] to the transcript.
+    pub fn write_polynomial<FE: CodecFieldElement>(
+        &mut self,
+        polynomial: &Polynomial<FE>,
+    ) -> Result<(), anyhow::Error> {
+        // Since it consists of two field elements, we could write a field element array. The spec
+        // isn't clear on this, but longfellow-zk writes individual field elements.
+        self.write_field_element(&polynomial.p0)?;
+        self.write_field_element(&polynomial.p2)?;
+
+        Ok(())
+    }
+
+    /// Write an array of zero bytes to the transcript. For large arrays, this will be faster and
+    /// use less memory than [`Self::write_byte_array`].
+    pub fn write_zero_array(&mut self, mut count: usize) -> Result<(), anyhow::Error> {
+        self.begin_write_byte_array(count)?;
+
+        // Invalidate any FSPRF we have because any challenges generated past this point need to
+        // incorporate the new bytes.
+        self.current_fsprf = None;
+
+        // Write zeroes in chunks of 16k.
+        let zeroes = [0u8; 16834];
+
+        while count > 0 {
+            let written = min(count, zeroes.len());
+            self.fsprf_seed.update(&zeroes[..written]);
+            count -= written;
+        }
+
+        Ok(())
+    }
+
+    /// Write the tag and length for a byte array.
+    fn begin_write_byte_array(&mut self, length: usize) -> Result<(), anyhow::Error> {
+        // Length prefix is 8 bytes, so reject slices that are too big
+        let length = u64::try_from(length).context("byte array too big for transcript")?;
+
+        // Write tag for byte array.
+        self.write_bytes(&[Tag::ByteArray.as_byte(self.mode)])?;
+
+        // Write length of array as 8 little endian bytes
+        self.write_bytes(&length.to_le_bytes())?;
+
+        Ok(())
+    }
+
+    /// Write a slice of bytes to the transcript, with no tag or length.
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), anyhow::Error> {
+        // Invalidate any FSPRF we have because any challenges generated past this point need to
+        // incorporate the new bytes.
+        self.current_fsprf = None;
+
+        // Saying we "write" or "append" is something of a misnomer: really we are updating a
+        // SHA-256 hash with the bytes, and then that will be used as the seed for a
+        // [`FiatShamirPseudoRandomFunction`] used to generate challenges.
+        self.fsprf_seed.update(bytes);
+
+        Ok(())
+    }
+
+    fn get_current_fsprf(&mut self) -> &mut FiatShamirPseudoRandomFunction {
+        self.current_fsprf.get_or_insert_with(|| {
+            // Clone the SHA256 state so we can finalize it
+            let fsprf_seed = self.fsprf_seed.clone().finalize();
+            // TODO: handle fallible initialization here
+            FiatShamirPseudoRandomFunction::new(&Sha256Digest::from(fsprf_seed))
+                .expect("failed to init FSPRF")
+        })
+    }
+
+    /// Generate a challenge, consisting of `length` field elements.
+    pub fn generate_challenge<FE: CodecFieldElement>(
+        &mut self,
+        length: usize,
+    ) -> Result<Vec<FE>, anyhow::Error> {
+        let fsprf = self.get_current_fsprf();
+
+        let mut buffer = vec![0; FE::num_bytes()];
+        Ok(
+            std::iter::repeat_with(|| fsprf.sample_field_element(&mut buffer))
+                .take(length)
+                .collect(),
+        )
+    }
+
+    /// Generate a value smaller than `max`.
+    fn generate_natural(&mut self, max: usize) -> usize {
+        let fsprf = self.get_current_fsprf();
+
+        let mut num_bits = max.ilog2() as usize;
+        if max.count_ones() > 1 {
+            num_bits += 1;
+        }
+        let num_sampled_bytes = num_bits.div_ceil(8);
+
+        loop {
+            let mut sampled_bytes = [0u8; (usize::BITS as usize).div_ceil(8)];
+            for (sampled_byte, fsprf_byte) in sampled_bytes[..num_sampled_bytes]
+                .iter_mut()
+                .zip(&mut *fsprf)
+            {
+                *sampled_byte = fsprf_byte;
+            }
+            let excess_bits = num_sampled_bytes * 8 - num_bits;
+            if excess_bits != 0 {
+                sampled_bytes[num_sampled_bytes - 1] &= (1 << (8 - excess_bits)) - 1;
+            }
+
+            let natural = usize::from_le_bytes(sampled_bytes);
+            if natural < max {
+                break natural;
+            }
+        }
+    }
+
+    /// Generate `count` values in the range `[0, max)` with no repeated values. `max` must be
+    /// greater than `count.
+    pub fn generate_naturals_without_replacement(
+        &mut self,
+        max: usize,
+        count: usize,
+    ) -> Vec<usize> {
+        assert!(max > count);
+        let mut list: Vec<_> = (0usize..max).collect();
+        for i in 0..count {
+            let j = i + self.generate_natural(max - i);
+            list.swap(i, j);
+        }
+
+        list.truncate(count);
+        list
+    }
+}
+
+impl PartialEq for Transcript {
+    fn eq(&self, other: &Self) -> bool {
+        let own_fsprf_seed = self.fsprf_seed.clone().finalize();
+        let other_fsprf_seed = other.fsprf_seed.clone().finalize();
+
+        own_fsprf_seed.as_slice() == other_fsprf_seed.as_slice()
+    }
+}
+
+impl Eq for Transcript {}
+
+/// Backwards compatibility configuration for the Fiat-Shamir transcript.
+#[derive(Clone, Copy, Debug)]
+pub enum TranscriptMode {
+    /// Normal operation.
+    ///
+    /// This uses separate domain separation tags for each type of prover message.
+    Normal,
+    /// Backwards compatibility for circuit version three.
+    ///
+    /// This uses the same domain separation tags when the prover writes a single field element or
+    /// an array of field elements.
+    V3Compatibility,
+}
+
+/// An iterator producing an infinite stream of bytes based on the provided key.
+///
+/// XXX: Could we just use the XOF from crate prio?
+///
+/// <https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-00#section-3.2>
+#[derive(Clone, Debug)]
+pub struct FiatShamirPseudoRandomFunction {
+    cipher: Aes256,
+    /// Current position of the infinite stream, in bytes.
+    position: usize,
+    /// Current block of generated bytes.
+    current_block: [u8; 16],
+}
+
+impl FiatShamirPseudoRandomFunction {
+    /// Initialize the FSPRF with the provided key, which must be the correct length for AES256.
+    pub fn new(seed: &Sha256Digest) -> Result<Self, anyhow::Error> {
+        let cipher = Aes256::new_from_slice(&seed.0).context("bad key length")?;
+
+        Ok(Self {
+            cipher,
+            position: 0,
+            current_block: [0; 16],
+        })
+    }
+
+    fn current_block(cipher: &Aes256, position: usize) -> [u8; 16] {
+        // Get the current block index as a u128, which is 16 bytes, which is the AES block size.
+        let block: u128 = (position / Aes256::block_size()).try_into().unwrap();
+        // Get the block index as little endian bytes, per 3.2.
+        let mut block = block.to_le_bytes();
+
+        // Encrypt the block index under the seed
+        cipher.encrypt_block(GenericArray::from_mut_slice(&mut block));
+
+        block
+    }
+
+    /// Sample a field element from this FSPRF.
+    fn sample_field_element<FE: CodecFieldElement>(&mut self, buffer: &mut [u8]) -> FE {
+        FE::sample_from_source(buffer, |bytes| {
+            for (out, byte) in bytes.iter_mut().zip(&mut *self) {
+                *out = byte;
+            }
+        })
+    }
+}
+
+impl Iterator for FiatShamirPseudoRandomFunction {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let position_in_block = self.position % Aes256::block_size();
+        if position_in_block == 0 {
+            // Exhausted current block, compute the next
+            self.current_block = Self::current_block(&self.cipher, self.position);
+        }
+
+        let value = self.current_block[position_in_block];
+
+        self.position += 1;
+
+        Some(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fields::{FieldElement, fieldp256::FieldP256};
+    use std::{collections::HashSet, iter::Iterator};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn deterministic() {
+        fn run_transcript() -> Vec<FieldP256> {
+            let mut transcript = Transcript::new(b"test", TranscriptMode::Normal).unwrap();
+
+            transcript
+                .write_field_element(&FieldP256::from_u128(10))
+                .unwrap();
+
+            transcript
+                .write_field_element_array(&[FieldP256::from_u128(11), FieldP256::from_u128(12)])
+                .unwrap();
+
+            transcript.write_byte_array(b"some bytes").unwrap();
+
+            let challenge = transcript.generate_challenge(10).unwrap();
+
+            assert_eq!(challenge.len(), 10);
+
+            challenge
+        }
+
+        assert_eq!(
+            run_transcript(),
+            run_transcript(),
+            "running the same transcript twice should yield identical challenges"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn distinct_session_id() {
+        let mut transcript1 = Transcript::new(b"test1", TranscriptMode::Normal).unwrap();
+        transcript1.write_byte_array(b"some bytes").unwrap();
+        let challenge1 = transcript1.generate_challenge::<FieldP256>(10).unwrap();
+
+        let mut transcript2 = Transcript::new(b"test2", TranscriptMode::Normal).unwrap();
+        transcript2.write_byte_array(b"some bytes").unwrap();
+        let challenge2 = transcript2.generate_challenge::<FieldP256>(10).unwrap();
+
+        assert_ne!(
+            challenge1, challenge2,
+            "running the same transcript with distinct session IDs should yield distinct challenges"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn distinct_messages() {
+        let mut transcript1 = Transcript::new(b"test", TranscriptMode::Normal).unwrap();
+        transcript1.write_byte_array(b"some bytes").unwrap();
+        let challenge1 = transcript1.generate_challenge::<FieldP256>(10).unwrap();
+
+        let mut transcript2 = Transcript::new(b"test", TranscriptMode::Normal).unwrap();
+        transcript2.write_byte_array(b"some other bytes").unwrap();
+        let challenge2 = transcript2.generate_challenge::<FieldP256>(10).unwrap();
+
+        assert_ne!(
+            challenge1, challenge2,
+            "running the same transcript with distinct session IDs should yield distinct challenges"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn writing_messages_changes_challenge() {
+        let mut transcript = Transcript::new(b"test", TranscriptMode::Normal).unwrap();
+        transcript.write_byte_array(b"some bytes").unwrap();
+        let challenge1 = transcript.generate_challenge::<FieldP256>(10).unwrap();
+        transcript.write_byte_array(b"some more bytes").unwrap();
+        let challenge2 = transcript.generate_challenge::<FieldP256>(10).unwrap();
+
+        assert_ne!(
+            challenge1, challenge2,
+            "generated challenge should differ after writing new bytes"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn writing_messages_resets_challenge() {
+        let mut transcript = Transcript::new(b"test", TranscriptMode::Normal).unwrap();
+        transcript.write_byte_array(b"some bytes").unwrap();
+        transcript.generate_challenge::<FieldP256>(10).unwrap();
+        transcript.write_byte_array(b"more bytes").unwrap();
+        let challenge1 = transcript.generate_challenge::<FieldP256>(10).unwrap();
+
+        let mut transcript2 = Transcript::new(b"test", TranscriptMode::Normal).unwrap();
+        transcript2.write_byte_array(b"some bytes").unwrap();
+        let _ = transcript2.generate_challenge::<FieldP256>(40).unwrap();
+        transcript2.write_byte_array(b"more bytes").unwrap();
+        let challenge2 = transcript2.generate_challenge(10).unwrap();
+
+        assert_eq!(
+            challenge1, challenge2,
+            "despite sampling different numbers of field elements after the first write, writing \
+            again should reset the FSPRF seed such that the second challenge generated is the same \
+            for both transcripts"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_vector() {
+        // FSPRF test vector adapted from longfellow-zk/lib/random/transcript_test.cc
+        // https://github.com/google/longfellow-zk/blob/7a329b35b846fa5b9eca6f0143d0197a73e126a2/lib/random/transcript_test.cc#L97
+        let mut transcript = Transcript::new(b"test", TranscriptMode::V3Compatibility).unwrap();
+        let bytes: Vec<_> = (0..100).collect();
+        transcript.write_byte_array(&bytes).unwrap();
+
+        // Check that seed matches SHA-256 of bytes written
+        let seed = transcript.fsprf_seed.clone().finalize();
+        assert_eq!(
+            seed.as_slice(),
+            &[
+                0x60, 0xcd, 0x16, 0x34, 0x92, 0x0f, 0x1c, 0xf2, 0xae, 0x83, 0x15, 0x02, 0xbf, 0x4b,
+                0xb9, 0x3a, 0x60, 0xcd, 0x03, 0xee, 0xb1, 0x9f, 0x93, 0xe2, 0xd6, 0xd5, 0x0d, 0xbd,
+                0x09, 0x84, 0xcb, 0xd8
+            ],
+        );
+
+        let sampled_bytes: Vec<_> = transcript.get_current_fsprf().take(32).collect();
+
+        // Check that sampled bytes match AES256 of counters under the seed
+        assert_eq!(
+            sampled_bytes.as_slice(),
+            &[
+                0x14, 0x1B, 0xBC, 0xBB, 0x54, 0x10, 0xDD, 0xEB, 0x70, 0x39, 0x83, 0x3B, 0x73, 0x65,
+                0x86, 0xA0, 0x20, 0xFD, 0xD5, 0x85, 0x63, 0x79, 0xB6, 0xC6, 0xC6, 0x83, 0xD5, 0xFF,
+                0x0B, 0x7F, 0x29, 0x8B
+            ],
+        );
+
+        // Write another zero byte and check that the seed changes as expected.
+        transcript.write_byte_array(&[0]).unwrap();
+        let seed = transcript.fsprf_seed.clone().finalize();
+        assert_eq!(
+            seed.as_slice(),
+            &[
+                0x18, 0x19, 0x78, 0x38, 0x0b, 0x6f, 0xf3, 0x21, 0x85, 0xc8, 0x28, 0xd9, 0xa0, 0x07,
+                0xee, 0x93, 0x0b, 0xce, 0x2e, 0x94, 0x7f, 0x88, 0x7f, 0x85, 0xb6, 0x4f, 0x39, 0x9a,
+                0x94, 0xcb, 0xe4, 0xa8
+            ],
+        )
+    }
+
+    // The following tests check our transcript against the output of
+    // longfellow-zk/lib/random/transcript.h. The test vectors were generated using the tests in
+    // branch https://github.com/tgeoghegan/longfellow-zk/tree/transcript-test-vectors at commit
+    // 7f4b9bf1ee7d6c9a13068375620e9026992d0261.
+    // These allow us to verify that we writing each type of transcript message, as well as writing
+    // all of them together, yields the expected challenges.
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_against_longfellow_zk() {
+        let mut transcript = Transcript::new(b"test", TranscriptMode::V3Compatibility).unwrap();
+
+        // Write a byte array
+        let bytes: Vec<_> = (0..100).collect();
+        transcript.write_byte_array(&bytes).unwrap();
+
+        // Write a single field element
+        transcript
+            .write_field_element(&FieldP256::from_u128(7))
+            .unwrap();
+
+        // Write an array of field elements
+        transcript
+            .write_field_element_array(&[FieldP256::from_u128(8), FieldP256::from_u128(9)])
+            .unwrap();
+
+        // Sample 16 field elements
+        let sampled = transcript.generate_challenge::<FieldP256>(16).unwrap();
+
+        for (expected_challenge, sampled) in [
+            "56d1d29388737105265b24587e17478db5cf281f6379356a999ff471aa629d9c",
+            "46b49914ac7b79688532aee9fde3845dbc07735842d5d3661754993fbb27a4ad",
+            "bde5153c546a54b454e6704ae5befaeae6ba41f9a0d4d9d6b689bd1f642bf077",
+            "64796fab12c29526076341f49e193977a0ce73cae39caf8455b911385159c56a",
+            "a48c89dfb09e18b5a1ead094e5d8014a9a52ee20d767fc031caf0da52861df6e",
+            "55bce962ec1f6ad34193a3c3a7b59209842c41d297c199005626ac4e5212120c",
+            "36a2e10d3ca3b03471ff91e6313c41bfd252ccff1fed98936be7d12af875ba0b",
+            "f44d4c25022a65fee87503a337953eb3de8343178b4f251c10e2c4446742a3e8",
+            "50bfb64435e7b715b2221cd96674e1b370c3c09492577e9e5b32fc0efebac7f7",
+            "b8b879fcecea04d3a33beb0222f44c7c0b00eac7119957b1ba285f546eaceaa1",
+            "d55ac67c9c1299ec4f0d74cc518a65db326c3844ecb8379acaa3dc8c478ccd3f",
+            "18846c55321f503b079793753999d3b40d3fd6007ac3a4138c4d5b38d854c4f7",
+            "087e553b81b23462b9a08158f4fd07ce173072eb64381686ed913681462d9128",
+            "5564f1f67097e2baea06554129dc05d2bc1e2544d50772af02f2aa9e3133c65e",
+            "a387cbf874a79958171dda43c37d461f0be4c17a312893bfdb617c645a00ebda",
+            "bd7f5cde08bd403e98c89f26a43a026d6b56940f034c6ee89c3603e6cd99cbb3",
+        ]
+        .into_iter()
+        .zip(sampled)
+        {
+            let expected_field =
+                FieldP256::try_from(hex::decode(expected_challenge).unwrap().as_slice()).unwrap();
+
+            assert_eq!(expected_field, sampled);
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_against_longfellow_zk_byte_array() {
+        let mut transcript = Transcript::new(b"test", TranscriptMode::V3Compatibility).unwrap();
+
+        let bytes: Vec<_> = (0..100).collect();
+        transcript.write_byte_array(&bytes).unwrap();
+
+        let sampled = transcript.generate_challenge::<FieldP256>(16).unwrap();
+
+        for (expected_challenge, sampled) in
+            ["141bbcbb5410ddeb7039833b736586a020fdd5856379b6c6c683d5ff0b7f298b"]
+                .into_iter()
+                .zip(sampled)
+        {
+            let expected_field =
+                FieldP256::try_from(hex::decode(expected_challenge).unwrap().as_slice()).unwrap();
+
+            assert_eq!(expected_field, sampled);
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_against_longfellow_zk_single_field_element() {
+        let mut transcript = Transcript::new(b"test", TranscriptMode::V3Compatibility).unwrap();
+
+        transcript
+            .write_field_element(&FieldP256::from_u128(7))
+            .unwrap();
+
+        let sampled = transcript.generate_challenge::<FieldP256>(16).unwrap();
+
+        for (expected_challenge, sampled) in
+            ["7e2697c3bd904dc9b9d9090eacf63d18ce837da2797fc353df98dbaadcf7db79"]
+                .into_iter()
+                .zip(sampled)
+        {
+            let expected_field =
+                FieldP256::try_from(hex::decode(expected_challenge).unwrap().as_slice()).unwrap();
+
+            assert_eq!(expected_field, sampled);
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_against_longfellow_zk_field_element_array() {
+        let mut transcript = Transcript::new(b"test", TranscriptMode::V3Compatibility).unwrap();
+
+        transcript
+            .write_field_element_array(&[FieldP256::from_u128(8), FieldP256::from_u128(9)])
+            .unwrap();
+
+        let sampled = transcript.generate_challenge::<FieldP256>(16).unwrap();
+
+        for (expected_challenge, sampled) in
+            ["1c6f759de80bdcf538d0bc95cf4cc5e819f207d1904ed533678dfa46a7ffeedc"]
+                .into_iter()
+                .zip(sampled)
+        {
+            let expected_field =
+                FieldP256::try_from(hex::decode(expected_challenge).unwrap().as_slice()).unwrap();
+
+            assert_eq!(expected_field, sampled);
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn generate_naturals_without_replacement() {
+        let mut transcript = Transcript::new(b"test", TranscriptMode::V3Compatibility).unwrap();
+        transcript.write_bytes(b"some bytes").unwrap();
+
+        let mut seen = HashSet::new();
+        for natural in transcript.generate_naturals_without_replacement(1_000_001, 1_000_000) {
+            assert!(natural < 1_000_001);
+            assert!(seen.insert(natural));
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn write_zero_array_equivalence() {
+        for (label, length) in [
+            ("less than buffer size", 100),
+            ("exactly buffer size", 16384),
+            ("greater than buffer size", 16384 + 1),
+        ] {
+            let mut transcript1 = Transcript::new(b"test", TranscriptMode::Normal).expect(label);
+            let zeroes = vec![0u8; length];
+            transcript1.write_byte_array(&zeroes).expect(label);
+
+            let mut transcript2 = Transcript::new(b"test", TranscriptMode::Normal).expect(label);
+            transcript2.write_zero_array(length).expect(label);
+
+            assert_eq!(
+                transcript1.generate_challenge::<FieldP256>(1).unwrap(),
+                transcript2.generate_challenge::<FieldP256>(1).unwrap(),
+                "test case {label}: generated challenges do not match"
+            );
+        }
+    }
+}

@@ -1,0 +1,615 @@
+//! Merkle tree, specified in [Section 4.1][1].
+//!
+//! [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-4.1
+
+use crate::{Codec, Sha256Digest, ligero::Nonce};
+use anyhow::{Context, anyhow};
+use sha2::{Digest, Sha256};
+use std::{
+    fmt::Debug,
+    io::{self, Write},
+};
+
+/// The value of a node of a [`MerkleTree`]. A tree could use various hashing algorithms, but we
+/// only support SHA-256, and so a `Digest` is always a 32 byte array, saving us a heap allocation.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct Node(Sha256Digest);
+
+impl Node {
+    /// Attempt to decode a `Node` from the provided hex-encoded string.
+    #[cfg(test)]
+    pub fn from_hex(input: &str) -> Result<Self, anyhow::Error> {
+        let array: [u8; 32] = hex::decode(input)
+            .context("failed to decode hex string")?
+            .try_into()
+            .map_err(|_| anyhow!("decoded hex string wrong length for array"))?;
+
+        Ok(Self(Sha256Digest(array)))
+    }
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self(Sha256Digest(Default::default()))
+    }
+}
+
+impl From<Sha256Digest> for Node {
+    fn from(value: Sha256Digest) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Sha256> for Node {
+    fn from(hash: Sha256) -> Self {
+        Self(Sha256Digest::from(hash.finalize()))
+    }
+}
+
+impl From<Node> for Sha256Digest {
+    fn from(value: Node) -> Self {
+        value.0
+    }
+}
+
+impl From<Root> for Node {
+    fn from(value: Root) -> Self {
+        Self(Sha256Digest(value.into_bytes()))
+    }
+}
+
+impl Codec for Node {
+    fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+        Sha256Digest::decode(bytes).map(Self)
+    }
+
+    fn encode<W: Write>(&self, bytes: &mut W) -> Result<(), anyhow::Error> {
+        self.0.encode(bytes)
+    }
+}
+
+impl Debug for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Node").field(&hex::encode(self.0.0)).finish()
+    }
+}
+
+/// An inclusion proof from a Merkle tree.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InclusionProof(Vec<Node>);
+
+/// Serialization of an inclusion proof implied by `write_merkle` in [7.4][1].
+///
+/// Surprisingly, the length of this particular array is u32, not u24 as elsewhere in Longfellow.
+/// See `write_size` and `read_size` in lib/zk/zk_proof.h.
+///
+/// [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-7.4
+impl Codec for InclusionProof {
+    fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+        let length = usize::try_from(u32::decode(bytes)?)
+            .context("inclusion proof length too large for usize")?;
+        let remaining = bytes.get_ref().len()
+            - usize::try_from(bytes.position()).context("cursor position is beyond usize limit")?;
+        if length > remaining / 32 {
+            return Err(anyhow!("inclusion proof length prefix is too large"));
+        }
+        Node::decode_fixed_array(bytes, length).map(Self)
+    }
+
+    fn encode<W: Write>(&self, bytes: &mut W) -> Result<(), anyhow::Error> {
+        let len: u32 = self
+            .0
+            .len()
+            .try_into()
+            .map_err(|_| anyhow!("proof too big to be encoded"))?;
+        len.encode(bytes)?;
+        Node::encode_fixed_array(&self.0, bytes)
+    }
+}
+
+/// A Merkle tree of digests, enabling proofs that some digest is a leaf of the tree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MerkleTree {
+    /// The nodes of the tree. The root is at index 1. Index 0 is unused.
+    digests: Vec<Node>,
+    /// The nonces hashed into the leaf nodes of the tree.
+    nonces: Vec<Nonce>,
+}
+
+impl MerkleTree {
+    /// Create a new tree big enough for the specified number of leaves.
+    pub fn new(leaf_count: usize) -> Self {
+        Self {
+            digests: vec![Node::default(); 2 * leaf_count],
+            nonces: vec![Nonce::default(); leaf_count],
+        }
+    }
+
+    /// Number of leaf nodes in the tree.
+    fn leaf_count(&self) -> usize {
+        self.tree_size() / 2
+    }
+
+    /// Number of nodes in the tree.
+    fn tree_size(&self) -> usize {
+        self.digests.len()
+    }
+
+    /// Index of left child of index.
+    fn left_child_index(index: usize) -> usize {
+        2 * index
+    }
+
+    /// Index of right child of index.
+    fn right_child_index(index: usize) -> usize {
+        2 * index + 1
+    }
+
+    /// Insert the leaf into the tree.
+    pub fn set_leaf(&mut self, position: usize, leaf: Node, nonce: Nonce) {
+        let first_leaf_index = self.leaf_count();
+        self.digests[first_leaf_index + position] = leaf;
+        self.nonces[position] = nonce;
+    }
+
+    /// Hash `left` and `right` together into a new `Node`.
+    fn hash_children(left: Node, right: Node) -> Node {
+        let mut sha256 = Sha256::new();
+        sha256.update(left.0.0);
+        sha256.update(right.0.0);
+        let array = sha256.finalize();
+        Node::from(Sha256Digest::from(array))
+    }
+
+    /// Build the tree up from the leaves to the root.
+    pub fn build(&mut self) {
+        // Iterate backward over inner nodes, computing each node's digest from its two children.
+        for index in (1..self.leaf_count()).rev() {
+            self.digests[index] = Self::hash_children(
+                self.digests[Self::left_child_index(index)],
+                self.digests[Self::right_child_index(index)],
+            );
+        }
+    }
+
+    /// Get the digest at the root of the tree.
+    pub fn root(&self) -> Root {
+        self.digests[1].into()
+    }
+
+    fn mark_tree(tree_size: usize, leaf_count: usize, requested_leaves: &[usize]) -> Vec<bool> {
+        let mut marked = vec![false; tree_size];
+
+        for requested_leaf in requested_leaves {
+            marked[leaf_count + requested_leaf] = true;
+        }
+
+        // Mark inner nodes if either child is marked.
+        for index in (1..leaf_count).rev() {
+            marked[index] =
+                marked[Self::left_child_index(index)] || marked[Self::right_child_index(index)];
+        }
+
+        marked
+    }
+
+    /// Prove that all the requested leaves are included in the tree. The indices are into the leaf
+    /// layer of the tree.
+    pub fn prove(&self, requested_leaves: &[usize]) -> InclusionProof {
+        let marked = Self::mark_tree(self.tree_size(), self.leaf_count(), requested_leaves);
+
+        let mut proof = Vec::new();
+
+        for index in (1..self.leaf_count()).rev() {
+            if marked[index] {
+                let mut child_index = Self::left_child_index(index);
+                if marked[child_index] {
+                    child_index = Self::right_child_index(index);
+                }
+                if !marked[child_index] {
+                    proof.push(self.digests[child_index]);
+                }
+            }
+        }
+
+        InclusionProof(proof)
+    }
+
+    /// Verify that the `proof` proves that the `included_nodes` (each consisting of a digest and
+    /// a leaf index) are included in the tree of size `leaf_count`, rooted at `root`.
+    pub fn verify(
+        root: Root,
+        leaf_count: usize,
+        included_nodes: &[Node],
+        included_node_indices: &[usize],
+        proof: &InclusionProof,
+    ) -> Result<(), anyhow::Error> {
+        if included_nodes.len() != included_node_indices.len() {
+            return Err(anyhow!("lengths of nodes and node indices must match"));
+        }
+        for leaf_index in included_node_indices {
+            if *leaf_index >= leaf_count {
+                return Err(anyhow!("included nodes index exceeds tree size"));
+            }
+        }
+
+        // Partial tree constructed from provided leaf nodes
+        let mut partial_tree = vec![None; 2 * leaf_count];
+
+        let mut proof_iter = proof.0.iter();
+        let marked = Self::mark_tree(leaf_count * 2, leaf_count, included_node_indices);
+
+        for index in (1..leaf_count).rev() {
+            if marked[index] {
+                let mut child_index = Self::left_child_index(index);
+                if marked[child_index] {
+                    child_index = Self::right_child_index(index)
+                }
+
+                if !marked[child_index] {
+                    let Some(proof_node) = proof_iter.next() else {
+                        return Err(anyhow!("not enough proof elements to prove inclusion"));
+                    };
+                    partial_tree[child_index] = Some(*proof_node);
+                }
+            }
+        }
+
+        // Fill leaves with included nodes
+        for (included_node, included_node_index) in included_nodes.iter().zip(included_node_indices)
+        {
+            let leaf_index = included_node_index + leaf_count;
+            partial_tree[leaf_index] = Some(*included_node);
+        }
+
+        // Compute necessary inner nodes
+        for index in (1..leaf_count).rev() {
+            let left_child = Self::left_child_index(index);
+            let right_child = Self::right_child_index(index);
+            if let (Some(left_child), Some(right_child)) =
+                (partial_tree[left_child], partial_tree[right_child])
+            {
+                partial_tree[index] = Some(Self::hash_children(left_child, right_child));
+            }
+        }
+
+        if partial_tree[1] != Some(root.into()) {
+            return Err(anyhow!("partial tree root does not match"));
+        }
+
+        Ok(())
+    }
+
+    /// The nonces hashed into the leaf nodes of the tree. The order of nonces matches the order of
+    /// the leaves.
+    pub fn nonces(&self) -> &[Nonce] {
+        &self.nonces
+    }
+}
+
+/// A commitment to a witness vector, as specified in [1]. Concretely, this is the root of a Merkle
+/// tree of SHA-256 hashes.
+///
+/// [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-4.3
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Root(Sha256Digest);
+
+impl From<Node> for Root {
+    fn from(value: Node) -> Self {
+        Self(Sha256Digest::from(value))
+    }
+}
+
+impl Root {
+    /// The commitment as a slice of bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0.0
+    }
+
+    pub fn into_bytes(&self) -> [u8; 32] {
+        self.0.0
+    }
+
+    /// A fake but well-formed commitment for tests.
+    #[cfg(test)]
+    pub fn test_commitment() -> Self {
+        Self::from(Node::from(Sha256Digest([1u8; 32])))
+    }
+}
+
+impl Codec for Root {
+    fn decode(bytes: &mut io::Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+        Ok(Self(Sha256Digest::decode(bytes)?))
+    }
+
+    fn encode<W: Write>(&self, bytes: &mut W) -> Result<(), anyhow::Error> {
+        self.0.encode(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ParameterizedCodec;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn simple_tree() -> MerkleTree {
+        let mut tree = MerkleTree::new(4);
+        tree.set_leaf(0, Node(Sha256Digest([1; 32])), Nonce([1; 32]));
+        tree.set_leaf(1, Node(Sha256Digest([2; 32])), Nonce([2; 32]));
+        tree.set_leaf(2, Node(Sha256Digest([3; 32])), Nonce([3; 32]));
+        tree.set_leaf(3, Node(Sha256Digest([4; 32])), Nonce([4; 32]));
+
+        tree.build();
+
+        assert_eq!(
+            tree.nonces,
+            &[
+                Nonce([1; 32]),
+                Nonce([2; 32]),
+                Nonce([3; 32]),
+                Nonce([4; 32])
+            ]
+        );
+
+        tree
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn prove_all_leaves() {
+        let tree = simple_tree();
+        let proof = tree.prove(&[0, 1, 2, 3]);
+
+        MerkleTree::verify(
+            tree.root(),
+            4,
+            &[
+                Node(Sha256Digest([1; 32])),
+                Node(Sha256Digest([2; 32])),
+                Node(Sha256Digest([3; 32])),
+                Node(Sha256Digest([4; 32])),
+            ],
+            &[0, 1, 2, 3],
+            &proof,
+        )
+        .unwrap();
+
+        for (invalid_nodes, invalid_indices) in [
+            // Missing a leaf
+            (
+                vec![
+                    Node(Sha256Digest([1; 32])),
+                    Node(Sha256Digest([2; 32])),
+                    Node(Sha256Digest([4; 32])),
+                ],
+                vec![0, 1, 3],
+            ),
+            // Wrong node values
+            (
+                vec![
+                    Node(Sha256Digest([5; 32])),
+                    Node(Sha256Digest([2; 32])),
+                    Node(Sha256Digest([3; 32])),
+                    Node(Sha256Digest([4; 32])),
+                ],
+                vec![0, 1, 2, 3],
+            ),
+            // Out of range node indices
+            (
+                vec![
+                    Node(Sha256Digest([1; 32])),
+                    Node(Sha256Digest([2; 32])),
+                    Node(Sha256Digest([3; 32])),
+                    Node(Sha256Digest([4; 32])),
+                ],
+                vec![5, 1, 2, 3],
+            ),
+            // Wrong node indices
+            (
+                vec![
+                    Node(Sha256Digest([1; 32])),
+                    Node(Sha256Digest([2; 32])),
+                    Node(Sha256Digest([3; 32])),
+                    Node(Sha256Digest([4; 32])),
+                ],
+                vec![1, 0, 2, 3],
+            ),
+        ] {
+            MerkleTree::verify(
+                tree.root(),
+                4,
+                invalid_nodes.as_slice(),
+                invalid_indices.as_slice(),
+                &proof,
+            )
+            .unwrap_err();
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn prove_leaf_subset() {
+        let tree = simple_tree();
+        let proof = tree.prove(&[0, 1]);
+
+        MerkleTree::verify(
+            tree.root(),
+            4,
+            &[Node(Sha256Digest([1; 32])), Node(Sha256Digest([2; 32]))],
+            &[0, 1],
+            &proof,
+        )
+        .unwrap();
+
+        for (invalid_nodes, invalid_indices) in [
+            // Leaves exist but aren't in proof
+            (
+                vec![Node(Sha256Digest([2; 32])), Node(Sha256Digest([4; 32]))],
+                vec![1, 3],
+            ),
+            // Missing a leaf
+            (vec![Node(Sha256Digest([1; 32]))], vec![0]),
+            // Wrong node values
+            (
+                vec![Node(Sha256Digest([5; 32])), Node(Sha256Digest([3; 32]))],
+                vec![0, 2],
+            ),
+            // Out of range node indices
+            (
+                vec![Node(Sha256Digest([1; 32])), Node(Sha256Digest([2; 32]))],
+                vec![5, 0],
+            ),
+            // Wrong node indices
+            (
+                vec![Node(Sha256Digest([1; 32])), Node(Sha256Digest([2; 32]))],
+                vec![1, 0],
+            ),
+        ] {
+            MerkleTree::verify(
+                tree.root(),
+                4,
+                invalid_nodes.as_slice(),
+                invalid_indices.as_slice(),
+                &proof,
+            )
+            .unwrap_err();
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn prove_multiple_subtrees() {
+        let tree = simple_tree();
+        let proof = tree.prove(&[0, 3]);
+
+        MerkleTree::verify(
+            tree.root(),
+            4,
+            &[Node(Sha256Digest([1; 32])), Node(Sha256Digest([4; 32]))],
+            &[0, 3],
+            &proof,
+        )
+        .unwrap();
+
+        for (invalid_nodes, invalid_indices) in [
+            // Leaves exist but aren't in proof
+            (
+                vec![Node(Sha256Digest([2; 32])), Node(Sha256Digest([3; 32]))],
+                vec![1, 2],
+            ),
+            // Missing a leaf
+            (vec![Node(Sha256Digest([1; 32]))], vec![0]),
+            // Wrong node values
+            (
+                vec![Node(Sha256Digest([5; 32])), Node(Sha256Digest([4; 32]))],
+                vec![0, 3],
+            ),
+            // Out of range node indices
+            (
+                vec![Node(Sha256Digest([1; 32])), Node(Sha256Digest([4; 32]))],
+                vec![5, 3],
+            ),
+            // Wrong node indices
+            (
+                vec![Node(Sha256Digest([1; 32])), Node(Sha256Digest([4; 32]))],
+                vec![1, 3],
+            ),
+        ] {
+            MerkleTree::verify(
+                tree.root(),
+                4,
+                invalid_nodes.as_slice(),
+                invalid_indices.as_slice(),
+                &proof,
+            )
+            .unwrap_err();
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn codec_roundtrip_inclusion_proof() {
+        InclusionProof(vec![
+            Node::from(Sha256Digest([1; 32])),
+            Node::from(Sha256Digest([2; 32])),
+            Node::from(Sha256Digest([3; 32])),
+            Node::from(Sha256Digest([4; 32])),
+        ])
+        .roundtrip(&());
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn longfellow_zk_test_vector_69400748daedab509b1c05b771b41c1911fca381() {
+        // Test vector from draft-google-cfrg-libzk section B.1.1. at
+        // 69400748daedab509b1c05b771b41c1911fca381
+        let leaves: Vec<_> = [
+            "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+            "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+            "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+            "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+            "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+        ]
+        .into_iter()
+        .map(|leaf| Node::from_hex(leaf).unwrap())
+        .collect();
+        let mut tree = MerkleTree::new(leaves.len());
+
+        for (index, leaf) in leaves.iter().enumerate() {
+            // It doesn't matter what nonce we use
+            tree.set_leaf(index, *leaf, Nonce([0; 32]));
+        }
+
+        tree.build();
+        let root = tree.root();
+
+        // Check that we compute the right root
+        assert_eq!(
+            root,
+            Node::from_hex("f22f4501ffd3bdffcecc9e4cd6828a4479aeedd6aa484eb7c1f808ccf71c6e76")
+                .unwrap()
+                .into()
+        );
+
+        let proofs = [
+            (
+                [0, 1],
+                vec![
+                    "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                    "f03808f5b8088c61286d505e8e93aa378991d9889ae2d874433ca06acabcd493",
+                ],
+            ),
+            (
+                [1, 3],
+                vec![
+                    "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+                    "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+                    "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+                ],
+            ),
+        ];
+
+        for (requested_leaves, hex_proof) in proofs {
+            let decoded_proof = InclusionProof(
+                hex_proof
+                    .iter()
+                    .map(|hex| Node::from_hex(hex).unwrap())
+                    .collect(),
+            );
+
+            // Check that we compute the right proof
+            assert_eq!(decoded_proof, tree.prove(&requested_leaves));
+
+            let included_leaves: Vec<_> = requested_leaves
+                .iter()
+                .map(|index| leaves[*index])
+                .collect();
+
+            // Check that we can verify the test vector proof
+            MerkleTree::verify(
+                root,
+                leaves.len(),
+                &included_leaves,
+                &requested_leaves,
+                &decoded_proof,
+            )
+            .unwrap();
+        }
+    }
+}

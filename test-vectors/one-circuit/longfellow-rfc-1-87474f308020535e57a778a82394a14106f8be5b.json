@@ -1,0 +1,38 @@
+{
+    "description": "Circuit C(n, m, s) = 0 if and only if n is the m-th s-gonal number in F_p128. This circuit verifies that 2n = (s-2)m^2 - (s - 4)*m.",
+    "field": 6,
+    "depth": 3,
+    "quads": 11,
+    "_terms": 11,
+    "ligero_parameters":{
+        "nreq": 6,
+        "rate": 4,
+        "witnesses_per_row": 15,
+        "quadratic_constraints_per_row": 2,
+        "block_size": 21,
+        "num_columns": 128
+    },
+    "valid_inputs": [
+    "2d000000000000000000000000000000",
+    "05000000000000000000000000000000",
+    "06000000000000000000000000000000"
+],
+"invalid_inputs": [
+    "2d000000000000000000000000000000",
+    "05000000000000000000000000000000",
+    "07000000000000000000000000000000"
+],
+    "pad": 2,
+    "ligero_commitment": "c1474a75e91f3eaddac355ef6a5afdbf02494848fc7ffa57d5654408b8af73cf",
+    "constraints": {
+        "linear_rhs": [
+            "94add22d4b1ff044987b105c23112a56",
+            "ca4ca37c73792709954cc23429e6c4fa",
+            "4850e1eab715075c0118011e7bb2a8e5"
+        ],
+        "quadratic": [
+            { "x": 14, "y": 15, "z": 16 },
+            { "x": 25, "y": 26, "z": 27 }
+        ]
+    }
+}

@@ -1,0 +1,745 @@
+//! Parsing of COSE CBOR structures.
+
+use crate::mdoc_zk::mdoc::ByteString;
+use serde::{
+    Deserialize, Serialize,
+    de::{Error, IgnoredAny, MapAccess, SeqAccess, Visitor},
+    ser::SerializeMap,
+};
+use std::fmt;
+
+/// COSE_Sign1 from RFC 9052.
+#[derive(Debug, Deserialize)]
+#[serde(from = "CoseSign1Tuple")]
+pub(super) struct CoseSign1 {
+    /// Protected header parameters.
+    ///
+    /// If there are no protected header parameters, this will be the empty byte string. Otherwise,
+    /// it will be the CBOR encoding of a map.
+    pub(super) protected: Vec<u8>,
+    /// Unprotected header parameters.
+    pub(super) unprotected: CoseHeaders,
+    /// The message that is the subject of the signature.
+    ///
+    /// This will be `None` for detached signatures.
+    pub(super) payload: Option<Vec<u8>>,
+    /// The signature itself.
+    pub(super) signature: Vec<u8>,
+}
+
+impl From<CoseSign1Tuple> for CoseSign1 {
+    fn from(CoseSign1Tuple(protected, unprotected, payload, signature): CoseSign1Tuple) -> Self {
+        Self {
+            protected,
+            unprotected,
+            payload,
+            signature,
+        }
+    }
+}
+
+/// Helper type for deserializing COSE_Sign1 from a CBOR list.
+#[derive(Deserialize)]
+struct CoseSign1Tuple(Vec<u8>, CoseHeaders, Option<Vec<u8>>, Vec<u8>);
+
+/// Headers from a COSE_Sign1 message.
+///
+/// This is defined as a map from numbers or strings to various kinds of values. We only parse the
+/// kinds of parameters that we care about.
+#[derive(Debug, Default)]
+pub(super) struct CoseHeaders {
+    pub(super) x5chain: Option<CoseX509>,
+}
+
+impl<'de> Deserialize<'de> for CoseHeaders {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(CoseHeadersVisitor)
+    }
+}
+
+struct CoseHeadersVisitor;
+
+impl<'de> Visitor<'de> for CoseHeadersVisitor {
+    type Value = CoseHeaders;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut x5chain = None;
+
+        while let Some(key) = map.next_key()? {
+            match key {
+                CoseLabel::Number(header_parameters::X5CHAIN) => {
+                    x5chain = Some(map.next_value()?);
+                }
+                _ => {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+        }
+
+        Ok(CoseHeaders { x5chain })
+    }
+}
+
+/// Map keys used throughout COSE.
+#[derive(Debug, PartialEq, Eq, Hash, Deserialize)]
+#[serde(untagged)]
+enum CoseLabel {
+    Number(i64),
+    String(String),
+}
+
+/// Labels for COSE header parameters.
+///
+/// See <https://www.iana.org/assignments/cose/cose.xhtml#header-parameters>.
+mod header_parameters {
+    /// The label for the alg header parameter.
+    pub(super) const ALG: i64 = 1;
+    /// The label for the x5chain header parameter.
+    pub(super) const X5CHAIN: i64 = 33;
+}
+
+/// COSE_X509 from RFC 9360.
+///
+/// This can be either `bstr` or `[ bstr ]` on the wire. We represent both cases as a nested vector.
+/// Note that we have to jump through some hoops to detect the difference via serde.
+#[derive(Debug)]
+pub(super) struct CoseX509(pub(super) Vec<Vec<u8>>);
+
+impl<'de> Deserialize<'de> for CoseX509 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(CoseX509Visitor).map(Self)
+    }
+}
+
+struct CoseX509Visitor;
+
+impl<'de> Visitor<'de> for CoseX509Visitor {
+    type Value = Vec<Vec<u8>>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("byte array or a list of byte arrays")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(vec![v.to_vec()])
+    }
+
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(vec![v])
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let size_hint = seq.size_hint();
+        match seq.next_element()? {
+            Some(ByteOrBytes::Byte(byte)) => {
+                let mut inner = Vec::with_capacity(size_hint.unwrap_or_default());
+                inner.push(byte);
+                while let Some(byte) = seq.next_element::<u8>()? {
+                    inner.push(byte);
+                }
+                Ok(vec![inner])
+            }
+            Some(ByteOrBytes::Bytes(bytes)) => {
+                let mut output = Vec::with_capacity(size_hint.unwrap_or_default());
+                output.push(bytes.0);
+                while let Some(bytes) = seq.next_element::<ByteString>()? {
+                    output.push(bytes.0);
+                }
+                Ok(output)
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ByteOrBytes {
+    Byte(u8),
+    Bytes(ByteString),
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub(super) struct CoseKey {
+    pub(super) x: Vec<u8>,
+    pub(super) y: Vec<u8>,
+}
+
+impl<'de> Deserialize<'de> for CoseKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(CoseKeyVisitor)
+    }
+}
+
+struct CoseKeyVisitor;
+
+impl<'de> Visitor<'de> for CoseKeyVisitor {
+    type Value = CoseKey;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("map")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut kty_seen = false;
+        let mut crv_seen = false;
+        let mut x = None;
+        let mut y = None;
+
+        while let Some(key) = map.next_key::<CoseLabel>()? {
+            match key {
+                CoseLabel::Number(key_parameters::KTY) => {
+                    if kty_seen {
+                        return Err(A::Error::duplicate_field("kty"));
+                    }
+                    kty_seen = true;
+                    let key_type = map.next_value::<CoseLabel>()?;
+                    let CoseLabel::Number(key_types::EC2) = key_type else {
+                        return Err(A::Error::custom("unsupported COSE key type"));
+                    };
+                }
+                CoseLabel::Number(key_parameters::KTY_2_CRV) => {
+                    if crv_seen {
+                        return Err(A::Error::duplicate_field("crv"));
+                    }
+                    crv_seen = true;
+                    let curve = map.next_value::<CoseLabel>()?;
+                    let CoseLabel::Number(elliptic_curves::P256) = curve else {
+                        return Err(A::Error::custom("unsupported elliptic curve"));
+                    };
+                }
+                CoseLabel::Number(key_parameters::KTY_2_X) => {
+                    if x.is_some() {
+                        return Err(A::Error::duplicate_field("x"));
+                    }
+                    x = Some(map.next_value()?);
+                }
+                CoseLabel::Number(key_parameters::KTY_2_Y) => {
+                    if y.is_some() {
+                        return Err(A::Error::duplicate_field("y"));
+                    }
+                    y = Some(map.next_value()?);
+                }
+                _ => {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+        }
+
+        if !kty_seen {
+            return Err(A::Error::missing_field("kty"));
+        }
+        if !crv_seen {
+            return Err(A::Error::missing_field("crv"));
+        }
+
+        Ok(CoseKey {
+            x: x.ok_or_else(|| A::Error::missing_field("x"))?,
+            y: y.ok_or_else(|| A::Error::missing_field("y"))?,
+        })
+    }
+}
+
+/// Labels for COSE key parameters.
+///
+/// See <https://www.iana.org/assignments/cose/cose.xhtml#key-common-parameters> and
+/// <https://www.iana.org/assignments/cose/cose.xhtml#key-type-parameters>.
+mod key_parameters {
+    /// The label for the key type parameter.
+    pub(super) const KTY: i64 = 1;
+    /// The label for the curve identifier parameter.
+    pub(super) const KTY_2_CRV: i64 = -1;
+    /// The label for the x-coordinate of the private key.
+    pub(super) const KTY_2_X: i64 = -2;
+    /// The label for the y-coordinate of the private key.
+    pub(super) const KTY_2_Y: i64 = -3;
+}
+
+/// Labels for COSE key types.
+///
+/// See <https://www.iana.org/assignments/cose/cose.xhtml#key-type>.
+mod key_types {
+    /// The label for elliptic curve keys with x- and y-coordinates.
+    pub(super) const EC2: i64 = 2;
+}
+
+/// Labels for elliptic curves.
+///
+/// See <https://www.iana.org/assignments/cose/cose.xhtml#elliptic-curves>.
+mod elliptic_curves {
+    /// The label for P-256.
+    pub(super) const P256: i64 = 1;
+}
+
+/// Sig_structure from RFC 9052.
+#[derive(Clone, Serialize)]
+#[serde(into = "SigStructureTuple")]
+pub(super) struct SigStructure {
+    pub(super) body_protected: ByteString,
+    pub(super) external_aad: ByteString,
+    pub(super) payload: ByteString,
+}
+
+#[derive(Serialize)]
+struct SigStructureTuple(&'static str, ByteString, ByteString, ByteString);
+
+impl From<SigStructure> for SigStructureTuple {
+    fn from(sig_structure: SigStructure) -> Self {
+        let SigStructure {
+            body_protected,
+            external_aad,
+            payload,
+        } = sig_structure;
+        Self("Signature1", body_protected, external_aad, payload)
+    }
+}
+
+/// Protected headers encoding just an algorithm identifier, with value ES256.
+pub(super) struct ProtectedHeadersEs256;
+
+impl Serialize for ProtectedHeadersEs256 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry(&header_parameters::ALG, &algorithms::ES256)?;
+        map.end()
+    }
+}
+
+/// Labels for COSE algorithms.
+///
+/// See <https://www.iana.org/assignments/cose/cose.xhtml#algorithms>.
+mod algorithms {
+    /// The label for the ECDSA w/ SHA-256 algorithm.
+    pub(super) const ES256: i64 = -7;
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::mdoc_zk::mdoc::{
+        CoseKey, CoseSign1,
+        cose::{CoseHeaders, CoseLabel, CoseX509, ProtectedHeadersEs256},
+    };
+    use assert_matches::assert_matches;
+    use hex_literal::hex;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_cose_sign1() {
+        let parsed = ciborium::from_reader::<CoseSign1, _>(
+            hex!(
+                "84" // array(4)
+                "40" // bytes(0)
+                "a0" // map(0)
+                "47" // bytes(7)
+                "7061796c6f6164" // "payload"
+                "49" // bytes(9)
+                "7369676e6174757265" // "signature"
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(parsed.protected, b"");
+        assert!(parsed.unprotected.x5chain.is_none());
+        assert_eq!(parsed.payload.unwrap(), b"payload");
+        assert_eq!(parsed.signature, b"signature");
+
+        let parsed = ciborium::from_reader::<CoseSign1, _>(
+            hex!(
+                "84" // array(4)
+                "40" // bytes(0)
+                "a0" // map(0)
+                "f6" // primitive(22), null
+                "49" // bytes(9)
+                "7369676e6174757265" // "signature"
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert!(parsed.payload.is_none());
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_headers() {
+        let headers_1 = ciborium::from_reader::<CoseHeaders, _>(
+            hex!(
+                "a0" // map(0)
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert!(headers_1.x5chain.is_none());
+
+        let headers_2 = ciborium::from_reader::<CoseHeaders, _>(
+            hex!(
+                "a1" // map(1)
+                "24" // negative(4), -1 - 4 = -5
+                "a0" // map(0)
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert!(headers_2.x5chain.is_none());
+
+        let headers_3 = ciborium::from_reader::<CoseHeaders, _>(
+            hex!(
+                "a1" // map(1)
+                "45" // bytes(5)
+                "6f74686572" // "other"
+                "a0" // map(0)
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert!(headers_3.x5chain.is_none());
+
+        let headers_4 = ciborium::from_reader::<CoseHeaders, _>(
+            hex!(
+                "a1" // map(1)
+                "18 21" // unsigned(33)
+                "44" // bytes(4)
+                "63657274" // "cert"
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(headers_4.x5chain.unwrap().0, vec![b"cert"]);
+    }
+
+    #[wasm_bindgen_test(unsupported  =test)]
+    fn test_label() {
+        assert_matches!(
+            ciborium::from_reader(hex!(
+                "20" // negative(0), -1 - 0 = -1
+            ).as_slice()).unwrap(),
+            CoseLabel::Number(number) => assert_eq!(number, -1)
+        );
+        assert_matches!(
+            ciborium::from_reader(hex!(
+                "65" // text(5)
+                "6f74686572" // "other"
+            ).as_slice()).unwrap(),
+            CoseLabel::String(string) => assert_eq!(string, "other")
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_cose_x509() {
+        let parsed_1 = ciborium::from_reader::<CoseX509, _>(
+            hex!(
+                "44" // bytes(4)
+                "74657374" // "test"
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(parsed_1.0, [b"test"]);
+
+        let parsed_2 = ciborium::from_reader::<CoseX509, _>(
+            hex!(
+                "81" // array(1)
+                "44" // bytes(4)
+                "74657374" // "test"
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(parsed_2.0, [b"test"]);
+
+        let parsed_3 = ciborium::from_reader::<CoseX509, _>(
+            hex!(
+                "82" // array(2)
+                "45" // bytes(5)
+                "6365727431" // "cert1"
+                "45" // bytes(5)
+                "6365727432" // "cert2"
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(parsed_3.0, [b"cert1", b"cert2"]);
+
+        let parsed_4 = ciborium::from_reader::<CoseX509, _>(
+            hex!(
+                "80" // array(0)
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert!(parsed_4.0.is_empty());
+
+        // Test out the ByteOrBytes::Byte code path. This is currently
+        // unreachable with valid COSE_X509 inputs, but that could change with
+        // serde-level changes.
+        let parsed_5 = ciborium::from_reader::<CoseX509, _>(
+            hex!(
+                "84" // array(4)
+                "18 63" // unsigned(0x63), 'c'
+                "18 65" // unsigned(0x65), 'e'
+                "18 72" // unsigned(0x72), 'r'
+                "18 74" // unsigned(0x74), 't'
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(parsed_5.0, [b"cert"]);
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_cose_key() {
+        let key = ciborium::from_reader::<CoseKey, _>(
+            hex!(
+                "a4" // map(4)
+
+                // kty = EC2
+                "01" // unsigned(1)
+                "02" // unsigned(2)
+
+                // crv = P-256
+                "20" // negative(0), -1 - 0 = -1
+                "01" // unsigned(1)
+
+                // x-coordinate
+                "21" // negative(1), -1 - 1 = -2
+                "41" // bytes(1)
+                "78" // "x"
+
+                // y-coordinate
+                "22" // negative(2), -1 - 2 = -3
+                "41" // bytes(1)
+                "79" // "y"
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(key.x, b"x");
+        assert_eq!(key.y, b"y");
+
+        // Wrong values for expected key parameters.
+        let wrong_kty_error = ciborium::from_reader::<CoseKey, _>(
+            hex!(
+                "a4" // map(4)
+
+                // wrong kty
+                "01" // unsigned(1)
+                "01" // unsigned(1)
+
+                // crv = P-256
+                "20" // negative(0), -1 - 0 = -1
+                "01" // unsigned(1)
+
+                // x-coordinate
+                "21" // negative(1), -1 - 1 = -2
+                "40" // bytes(0)
+
+                // y-coordinate
+                "22" // negative(2), -1 - 2 = -3
+                "40" // bytes(0)
+            )
+            .as_slice(),
+        )
+        .unwrap_err();
+        assert!(
+            wrong_kty_error
+                .to_string()
+                .contains("unsupported COSE key type")
+        );
+
+        let wrong_crv_error = ciborium::from_reader::<CoseKey, _>(
+            hex!(
+                "a4" // map(4)
+
+                // kty = EC2
+                "01" // unsigned(1)
+                "02" // unsigned(2)
+
+                // wrong crv
+                "20" // negative(0), -1 - 0 = -1
+                "02" // unsigned(2)
+
+                // x-coordinate
+                "21" // negative(1), -1 - 1 = -2
+                "40" // bytes(0)
+
+                // y-coordinate
+                "22" // negative(2), -1 - 2 = -3
+                "40" // bytes(0)
+            )
+            .as_slice(),
+        )
+        .unwrap_err();
+        assert!(
+            wrong_crv_error
+                .to_string()
+                .contains("unsupported elliptic curve")
+        );
+
+        // Extra key-value pairs.
+        let key_2 = ciborium::from_reader::<CoseKey, _>(
+            hex!(
+                "a6" // map(6)
+
+                // kty = EC2
+                "01" // unsigned(1)
+                "02" // unsigned(2)
+
+                // crv = P-256
+                "20" // negative(0), -1 - 0 = -1
+                "01" // unsigned(1)
+
+                // x-coordinate
+                "21" // negative(1), -1 - 1 = -2
+                "41" // bytes(1)
+                "78" // "x"
+
+                // y-coordinate
+                "22" // negative(2), -1 - 2 = -3
+                "41" // bytes(1)
+                "79" // "y"
+
+                "65" // text(5)
+                "6f74686572" // "other"
+                "45" // bytes(5)
+                "6f74686572" // "other"
+
+                "63" // text(3)
+                "6d6170" // "map"
+                "a1" // map(1)
+                "01" // unsigned(1)
+                "02" // unsigned(2)
+            )
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(key, key_2);
+
+        // Missing key parameters.
+        let missing_kty_error = ciborium::from_reader::<CoseKey, _>(
+            hex!(
+                "a3" // map(3)
+
+                // crv = P-256
+                "20" // negative(0), -1 - 0 = -1
+                "01" // unsigned(1)
+
+                // x-coordinate
+                "21" // negative(1), -1 - 1 = -2
+                "41" // bytes(1)
+                "78" // "x"
+
+                // y-coordinate
+                "22" // negative(2), -1 - 2 = -3
+                "41" // bytes(1)
+                "79" // "y"
+            )
+            .as_slice(),
+        )
+        .unwrap_err();
+        assert!(missing_kty_error.to_string().contains("missing field"));
+
+        let missing_crv_error = ciborium::from_reader::<CoseKey, _>(
+            hex!(
+                "a3" // map(3)
+
+                // kty = EC2
+                "01" // unsigned(1)
+                "02" // unsigned(2)
+
+                // x-coordinate
+                "21" // negative(1), -1 - 1 = -2
+                "41" // bytes(1)
+                "78" // "x"
+
+                // y-coordinate
+                "22" // negative(2), -1 - 2 = -3
+                "41" // bytes(1)
+                "79" // "y"
+            )
+            .as_slice(),
+        )
+        .unwrap_err();
+        assert!(missing_crv_error.to_string().contains("missing field"));
+
+        let missing_x_error = ciborium::from_reader::<CoseKey, _>(
+            hex!(
+                "a3" // map(3)
+
+                // kty = EC2
+                "01" // unsigned(1)
+                "02" // unsigned(2)
+
+                // crv = P-256
+                "20" // negative(0), -1 - 0 = -1
+                "01" // unsigned(1)
+
+                // y-coordinate
+                "22" // negative(2), -1 - 2 = -3
+                "41" // bytes(1)
+                "79" // "y"
+            )
+            .as_slice(),
+        )
+        .unwrap_err();
+        assert!(missing_x_error.to_string().contains("missing field"));
+
+        let missing_y_error = ciborium::from_reader::<CoseKey, _>(
+            hex!(
+                "a3" // map(3)
+
+                // kty = EC2
+                "01" // unsigned(1)
+                "02" // unsigned(2)
+
+                // crv = P-256
+                "20" // negative(0), -1 - 0 = -1
+                "01" // unsigned(1)
+
+                // x-coordinate
+                "21" // negative(1), -1 - 1 = -2
+                "41" // bytes(1)
+                "78" // "x"
+            )
+            .as_slice(),
+        )
+        .unwrap_err();
+        assert!(missing_y_error.to_string().contains("missing field"));
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn test_protected_headers_es256() {
+        let mut buffer = Vec::new();
+        ciborium::into_writer(&ProtectedHeadersEs256, &mut buffer).unwrap();
+        assert_eq!(buffer, b"\xa1\x01\x26");
+    }
+}
