@@ -1,15 +1,23 @@
+// no_std mode activation (`#![cfg_attr(not(feature = "std"), no_std)]`) and the
+// 27-file `std::*` → `alloc::*` / `core::*` cascade are deferred to follow-up
+// task #94 (1.2b2). This 1.2b1 commit only lays the scaffolding: the
+// `crate::io` shim, an unconditional `extern crate alloc` so the no_std arm of
+// the shim resolves, and a couple of core::* substitutions in this file. It
+// keeps the host `verifier` build green without flipping the actual no_std bit.
+
+extern crate alloc;
+
 use anyhow::{Context, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use core::fmt::{self, Display};
 use crypto_common::{generic_array::GenericArray, typenum::U32};
-use std::{
-    fmt::{self, Display},
-    io::{self, Cursor, Write},
-};
+use std::io::{Cursor, Write};
 
 pub mod circuit;
 #[cfg(feature = "mobile")]
 pub mod ffi_api;
 pub mod fields;
+pub mod io;
 #[cfg(all(target_family = "wasm", feature = "wasm"))]
 pub mod js_api;
 pub mod ligero;
@@ -83,7 +91,7 @@ impl PartialEq<usize> for Size {
 }
 
 impl PartialOrd<usize> for Size {
-    fn partial_cmp(&self, other: &usize) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &usize) -> Option<core::cmp::Ordering> {
         usize::from(*self).partial_cmp(other)
     }
 }
@@ -145,7 +153,7 @@ impl Size {
 ///
 /// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7
 /// [2]: https://docs.rs/prio/0.17.0/prio/codec/index.html
-pub trait Codec: Sized + PartialEq + Eq + std::fmt::Debug {
+pub trait Codec: Sized + PartialEq + Eq + core::fmt::Debug {
     /// Decode an opaque byte buffer into an instance of this type. On success, the decoded value is
     /// returned and `bytes` is advanced by the encoded size of the value. On failure, no further
     /// attempt to read from `bytes` should be made.
@@ -262,7 +270,7 @@ impl fmt::Debug for Sha256Digest {
 }
 
 impl Codec for Sha256Digest {
-    fn decode(cursor: &mut io::Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+    fn decode(cursor: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
         let bytes: [u8; 32] = u8::decode_fixed_array(cursor, 32)?
             .try_into()
             .map_err(|_| anyhow!("failed to convert byte vec to array"))?;
@@ -295,7 +303,7 @@ impl From<GenericArray<u8, U32>> for Sha256Digest {
 ///
 /// [1]: https://www.ietf.org/archive/id/draft-google-cfrg-libzk-00.html#section-7
 /// [2]: https://docs.rs/prio/0.17.0/prio/codec/index.html
-pub trait ParameterizedCodec<P>: Sized + PartialEq + Eq + std::fmt::Debug {
+pub trait ParameterizedCodec<P>: Sized + PartialEq + Eq + core::fmt::Debug {
     /// Decode an opaque byte buffer into an instance of this type. On success, the decoded value is
     /// returned and `bytes` is advanced by the encoded size of the value. On failure, no further
     /// attempt to read from `bytes` should be made.
