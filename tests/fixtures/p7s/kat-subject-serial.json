@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "source": "synthetic TestAnchorA signer cert (Task #43a gen_synthetic_fixtures output); mirrors the original DIIA QES leaf layout byte-for-byte",
+  "derPath": "../integration/admin-ecdsa/leaf.der",
+  "derLength": 1292,
+  "oid": "2.5.4.5",
+  "attributeType": "subjectSerialNumber",
+  "subject": {
+    "attributeOffsetInDer": 374,
+    "attributeLength": 25
+  },
+  "serialNumberValue": {
+    "stringType": "PrintableString",
+    "tlvOffset": 381,
+    "tlvTagByteHex": "13",
+    "contentOffset": 383,
+    "contentLength": 16,
+    "asciiValue": "TINUA-1111111111",
+    "hexValue": "54494e55412d31313131313131313131",
+    "limbsLE64": [
+      "3544664140344609108",
+      "3544668469065756977",
+      "0",
+      "0"
+    ]
+  },
+  "notes": [
+    "contentOffset = first ASCII byte of the serialNumber value inside the leaf cert DER.",
+    "contentLength = 16 (TINUA- prefix + 10 ASCII digits; mirrors the DIIA RNOKPP layout).",
+    "limbsLE64 pack the 16 content bytes as 4×uint64 LE, zero-padded.",
+    "Post-#43a: asciiValue is the synthetic TestAnchorA stable-ID. Szafir (PL) and EE-Test (EE) remain deferred per lead."
+  ]
+}

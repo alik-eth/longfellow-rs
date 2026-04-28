@@ -63,6 +63,12 @@ serde_json = "1.0"
 serde_test = "1.0.177"
 sha2 = "0.10.9"
 wasm-bindgen-test = "0.3"
+# `tests/fixtures.rs` decodes the ISRG-imported mdoc circuit binaries
+# at `test-vectors/mdoc_zk/`, which are zstd-compressed. The `zstd`
+# crate is gated to `feature = "prover"` in the library; replicating
+# it here lets integration tests decompress regardless of the feature
+# set the lib happens to be built with.
+zstd = "0.13.3"
 
 [[bench]]
 name = "extend"
