@@ -37,6 +37,30 @@ impl BitPlucker<4, Field2_128> {
     }
 }
 
+impl BitPlucker<2, Field2_128> {
+    pub(crate) fn new() -> Self {
+        let offset = Field2_128::inject((1u16 << 2) - 1);
+        Self { offset }
+    }
+
+    pub(crate) fn encode(&self, value: u16) -> Field2_128 {
+        Field2_128::inject_bits::<{ 2 + 1 }>(2 * value) - self.offset
+    }
+
+    /// Encode multiple words into multiple field elements, packing 2 bits per element.
+    pub(crate) fn encode_u32_array(&self, words: &[u32], out: &mut [Field2_128]) {
+        assert_eq!(words.len() * 32, out.len() * 2);
+        let mask = u16::MAX >> (u16::BITS - 2);
+        for (word, out_chunk) in words.iter().zip(out.chunks_exact_mut(32 / 2)) {
+            let mut bits = *word;
+            for out_elem in out_chunk.iter_mut() {
+                *out_elem = self.encode(bits as u16 & mask);
+                bits >>= 2;
+            }
+        }
+    }
+}
+
 impl<const BITS: u8> BitPlucker<BITS, FieldP256> {
     /// Construct a bit plucker for a given number of bits.
     pub(crate) fn new() -> Self {

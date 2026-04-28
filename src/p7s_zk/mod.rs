@@ -36,6 +36,8 @@ pub mod parser;
 #[cfg(feature = "prover")]
 pub mod prover;
 pub mod public_inputs;
+#[cfg(feature = "prover")]
+pub(crate) mod sha256_witness;
 pub mod verifier;
 pub mod witness;
 
