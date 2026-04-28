@@ -118,3 +118,382 @@ pub const TRUST_ANCHOR_COUNT: u32 = 2;
 /// Big-endian raw scalar bytes for ECDSA signatures (DER-parsed in the
 /// host before reaching the blob).
 pub const ECDSA_SCALAR_LEN: usize = 32;
+
+// ---------------------------------------------------------------------------
+// Public-input wire-layout constants (mirror C++ `kHashPub*` / `kSigPub*`
+// in vendor/longfellow-zk/lib/circuits/p7s/p7s_zk.cc:470-562).
+//
+// These wire counts are baked into the pre-compiled p7s circuit binary;
+// any drift between Rust and C++ here will cause the Sumcheck/Ligero
+// verifier to reject otherwise-valid proofs. Treat as a frozen ABI.
+// ---------------------------------------------------------------------------
+
+/// Number of public-input wires for `pk_bytes` on the HASH circuit
+/// (65 bytes × 8 bits = 520 wires, LSB-first per byte). Mirrors C++
+/// `kHashPubPk = kPkBytes * 8`.
+pub const PK_PUB_BITS: usize = PK_BYTES * 8;
+
+/// Number of public-input wires for `nonce_bytes` on the HASH circuit
+/// (32 bytes × 8 bits = 256 wires, LSB-first per byte). Mirrors C++
+/// `kHashPubNonce = kNonceBytes * 8`.
+pub const NONCE_PUB_BITS: usize = NONCE_BYTES * 8;
+
+/// Pre-MAC public-input wire count for the HASH circuit (1833).
+/// Equal to: 1 (const) + 256 (context_hash) + 520 (pk) + 256 (nonce) +
+/// 256 (nullifier) + 256 (enroll_commit) + 256 (enroll_nullifier) + 32
+/// (trust_anchor_index). Mirrors C++ `kHashPubPreMac` and the
+/// `static_assert(kHashPubPreMac == 1833)` (`p7s_zk.cc:487`).
+pub const HASH_PUB_PRE_MAC: usize = 1
+    + 256
+    + PK_PUB_BITS
+    + NONCE_PUB_BITS
+    + 256
+    + 256
+    + 256
+    + 32;
+
+/// Number of MAC values bound across the hash + sig field split
+/// (4 messages × 2 GF(2^128) halves/message = 8). Mirrors C++
+/// `kTotalMacValues = kMacMessagesCount * kMacValuesPerMessage` from
+/// `vendor/longfellow-zk/lib/circuits/p7s/sub/p7s_signature.h:98`.
+pub const TOTAL_MAC_VALUES: usize = 8;
+
+/// HASH-side MAC public-input wires: `kTotalMacValues` mac values + 1
+/// `av` random challenge = 9 native EltW. Mirrors C++
+/// `kHashMacInputWires = kTotalMacValues + 1`.
+pub const HASH_MAC_INPUT_WIRES: usize = TOTAL_MAC_VALUES + 1;
+
+/// Total HASH-circuit public inputs = pre-MAC + MAC region. Pinned at
+/// 1842 by C++ `static_assert(kHashPubTotal == 1842)`.
+pub const HASH_PUB_TOTAL: usize = HASH_PUB_PRE_MAC + HASH_MAC_INPUT_WIRES;
+
+/// SIG-circuit const-1 wire count (auto-allocated wire 0).
+pub const SIG_PUB_CONST: usize = 1;
+
+/// SIG-circuit `trust_anchor_index` public-input wire count (1 EltW).
+pub const SIG_PUB_TRUST_ANCHOR_IDX: usize = 1;
+
+/// Per-MAC-value bit-decomposition width on the SIG circuit
+/// (`Fp256Base` can't hold a 128-bit GF(2^128) element as one wire,
+/// so each `v128` is bit-decomposed). Mirrors C++ `kSigMacBitsPerWire`.
+pub const SIG_MAC_BITS_PER_WIRE: usize = 128;
+
+/// SIG-side MAC public-input wires: `(kTotalMacValues + 1) × 128 = 1152`.
+/// Mirrors C++ `kSigMacInputWires`.
+pub const SIG_MAC_INPUT_WIRES: usize = (TOTAL_MAC_VALUES + 1) * SIG_MAC_BITS_PER_WIRE;
+
+/// Total SIG-circuit public inputs. Pinned at 1154 by C++
+/// `static_assert(kSigPubTotal == 1154)`.
+pub const SIG_PUB_TOTAL: usize = SIG_PUB_CONST + SIG_PUB_TRUST_ANCHOR_IDX + SIG_MAC_INPUT_WIRES;
+
+/// Wire index where the hash-circuit MAC region begins. Mirrors C++
+/// `kHashMacIndex`.
+pub const HASH_MAC_INDEX: usize = HASH_PUB_PRE_MAC;
+
+/// Wire index where the sig-circuit MAC region begins. Mirrors C++
+/// `kSigMacIndex`.
+pub const SIG_MAC_INDEX: usize = SIG_PUB_CONST + SIG_PUB_TRUST_ANCHOR_IDX;
+
+// ---------------------------------------------------------------------------
+// Wire-layout split + public-input fill (mirrors C++
+// `fill_hash_public_inputs` at p7s_zk.cc:2165 and the verifier-side
+// sig fill at p7s_zk.cc:2799-2806).
+//
+// The mdoc analog is `mdoc_zk::layout::split_hash_statement` /
+// `split_signature_statement`. Same idea: a typed view over a flat
+// `&mut [F]` slice with named fields per wire region.
+// ---------------------------------------------------------------------------
+
+use crate::fields::{FieldElement, field2_128::Field2_128, fieldp256::FieldP256};
+
+use super::public_inputs::ParsedPublic;
+
+/// Hash-circuit public-input layout (Field2_128, kHashPubTotal = 1842 wires).
+///
+///   [0]                              = const 1 (`Fs.one()`)
+///   [1 .. 1 + 256)                   = context_hash v256 (push_target order)
+///   [257 .. 257 + 520)               = pk_bytes (65 × v8, LSB-first per byte)
+///   [777 .. 777 + 256)               = nonce_bytes (32 × v8, LSB-first per byte)
+///   [1033 .. 1033 + 256)             = nullifier (push_target order)
+///   [1289 .. 1289 + 256)             = enroll_commit (push_target order)
+///   [1545 .. 1545 + 256)             = enroll_nullifier (push_target order)
+///   [1801 .. 1801 + 32)              = trust_anchor_index v32 (LSB-first u32)
+///   [1833 .. 1833 + 8)               = mac values (8 native EltW)
+///   [1841]                           = av (native EltW)
+pub(crate) struct SplitHashStatement<'a> {
+    pub implicit_one: &'a mut Field2_128,
+    pub context_hash: &'a mut [Field2_128; 256],
+    pub pk: &'a mut [Field2_128; PK_PUB_BITS],
+    pub nonce: &'a mut [Field2_128; NONCE_PUB_BITS],
+    pub nullifier: &'a mut [Field2_128; 256],
+    pub enroll_commit: &'a mut [Field2_128; 256],
+    pub enroll_nullifier: &'a mut [Field2_128; 256],
+    pub trust_anchor_index: &'a mut [Field2_128; 32],
+    /// 8 mac values + av, native EltW each (filled post-commit).
+    pub mac_region: &'a mut [Field2_128; HASH_MAC_INPUT_WIRES],
+}
+
+/// Segment a hash-circuit public-input slice into its named regions.
+///
+/// # Panics
+/// Panics if `slice.len() != HASH_PUB_TOTAL`.
+pub(crate) fn split_hash_statement(slice: &mut [Field2_128]) -> SplitHashStatement<'_> {
+    assert_eq!(
+        slice.len(),
+        HASH_PUB_TOTAL,
+        "hash statement length must equal kHashPubTotal = {HASH_PUB_TOTAL}"
+    );
+
+    let (implicit_one, rest) = slice.split_first_mut().unwrap();
+    let (context_hash, rest) = rest.split_at_mut(256);
+    let (pk, rest) = rest.split_at_mut(PK_PUB_BITS);
+    let (nonce, rest) = rest.split_at_mut(NONCE_PUB_BITS);
+    let (nullifier, rest) = rest.split_at_mut(256);
+    let (enroll_commit, rest) = rest.split_at_mut(256);
+    let (enroll_nullifier, rest) = rest.split_at_mut(256);
+    let (trust_anchor_index, rest) = rest.split_at_mut(32);
+    let (mac_region, rest) = rest.split_at_mut(HASH_MAC_INPUT_WIRES);
+    assert!(rest.is_empty());
+
+    SplitHashStatement {
+        implicit_one,
+        context_hash: context_hash.try_into().unwrap(),
+        pk: pk.try_into().unwrap(),
+        nonce: nonce.try_into().unwrap(),
+        nullifier: nullifier.try_into().unwrap(),
+        enroll_commit: enroll_commit.try_into().unwrap(),
+        enroll_nullifier: enroll_nullifier.try_into().unwrap(),
+        trust_anchor_index: trust_anchor_index.try_into().unwrap(),
+        mac_region: mac_region.try_into().unwrap(),
+    }
+}
+
+/// Sig-circuit public-input layout (FieldP256, kSigPubTotal = 1154 wires).
+///
+///   [0]                              = const 1
+///   [1]                              = trust_anchor_index (single EltW, of_scalar)
+///   [2 .. 2 + 1152)                  = mac region: 9 × v128 = 1152 bit-wires (LSB-first)
+pub(crate) struct SplitSigStatement<'a> {
+    pub implicit_one: &'a mut FieldP256,
+    pub trust_anchor_index: &'a mut FieldP256,
+    pub mac_region: &'a mut [FieldP256; SIG_MAC_INPUT_WIRES],
+}
+
+/// Segment a sig-circuit public-input slice into its named regions.
+///
+/// # Panics
+/// Panics if `slice.len() != SIG_PUB_TOTAL`.
+pub(crate) fn split_sig_statement(slice: &mut [FieldP256]) -> SplitSigStatement<'_> {
+    assert_eq!(
+        slice.len(),
+        SIG_PUB_TOTAL,
+        "sig statement length must equal kSigPubTotal = {SIG_PUB_TOTAL}"
+    );
+
+    let (implicit_one, rest) = slice.split_first_mut().unwrap();
+    let (trust_anchor_index, rest) = rest.split_first_mut().unwrap();
+    let (mac_region, rest) = rest.split_at_mut(SIG_MAC_INPUT_WIRES);
+    assert!(rest.is_empty());
+
+    SplitSigStatement {
+        implicit_one,
+        trust_anchor_index,
+        mac_region: mac_region.try_into().unwrap(),
+    }
+}
+
+/// Fill the pre-MAC region of a hash-circuit public-input statement
+/// from a parsed public blob. Mirrors C++ `fill_hash_public_inputs`
+/// (`p7s_zk.cc:2165`).
+///
+/// The `mac_region` is left untouched — the prover writes placeholders
+/// before `commit`, and overwrites with real MAC values + `av` after
+/// the post-commit Fiat-Shamir step. The verifier writes the MAC
+/// values directly via `push_hash_mac_values`.
+pub(crate) fn fill_hash_public_pre_mac(view: &mut SplitHashStatement<'_>, pub_: &ParsedPublic) {
+    *view.implicit_one = Field2_128::ONE;
+    push_target_be(view.context_hash, &pub_.context_hash);
+    push_bytes_lsb_first(view.pk, &pub_.pk);
+    push_bytes_lsb_first(view.nonce, &pub_.nonce);
+    push_target_be(view.nullifier, &pub_.nullifier);
+    push_target_be(view.enroll_commit, &pub_.enroll_commit);
+    push_target_be(view.enroll_nullifier, &pub_.enroll_nullifier);
+    push_uint_lsb_first_u32(view.trust_anchor_index, pub_.trust_anchor_index);
+}
+
+/// Fill the const-1 + trust-anchor-index region of a sig-circuit
+/// public-input statement. The MAC region is left untouched.
+///
+/// Mirrors the verifier-side fill at `p7s_zk.cc:2799-2806` and the
+/// prover-side at `p7s_zk.cc:2592-2596`.
+pub(crate) fn fill_sig_public_pre_mac(view: &mut SplitSigStatement<'_>, pub_: &ParsedPublic) {
+    *view.implicit_one = FieldP256::ONE;
+    *view.trust_anchor_index = FieldP256::from_u128(u128::from(pub_.trust_anchor_index));
+}
+
+// ---------------------------------------------------------------------------
+// Bit-pushing primitives (mirror C++ push_v8 / push_uint / push_target)
+// ---------------------------------------------------------------------------
+
+/// SHA-target view: bit `j` of the 256-wire output corresponds to bit
+/// `j % 8` of byte `(255 - j) / 8` of the 32-byte digest. Big-endian-byte
+/// / LSB-bit ordering — matches FlatSHA256Circuit's `assert_hash` layout.
+/// C++ source: `p7s_zk.cc:1571 push_target`.
+fn push_target_be(out: &mut [Field2_128; 256], digest: &[u8; 32]) {
+    for j in 0..256 {
+        let byte_idx = (255 - j) / 8;
+        let bit_idx = j % 8;
+        let bit = (digest[byte_idx] >> bit_idx) & 1;
+        out[j] = if bit == 1 { Field2_128::ONE } else { Field2_128::ZERO };
+    }
+}
+
+/// Byte-by-byte LSB-first bit decomposition. Each byte expands into
+/// 8 wires `[bit0, bit1, ..., bit7]`. Matches C++ `push_v8`
+/// (`p7s_zk.cc:1559`) / `push_pk_public` / `push_nonce_public`.
+fn push_bytes_lsb_first<const N_BITS: usize>(out: &mut [Field2_128; N_BITS], bytes: &[u8]) {
+    debug_assert_eq!(bytes.len() * 8, N_BITS);
+    for (i, &byte) in bytes.iter().enumerate() {
+        for bit_idx in 0..8 {
+            let bit = (byte >> bit_idx) & 1;
+            out[i * 8 + bit_idx] =
+                if bit == 1 { Field2_128::ONE } else { Field2_128::ZERO };
+        }
+    }
+}
+
+/// k-bit LSB-first u32 expansion. Matches C++ `push_uint`
+/// (`p7s_zk.cc:1564`); used for the v32 trust_anchor_index region.
+fn push_uint_lsb_first_u32<const K: usize>(out: &mut [Field2_128; K], value: u32) {
+    for j in 0..K {
+        let bit = ((value >> j) & 1) as u8;
+        out[j] = if bit == 1 { Field2_128::ONE } else { Field2_128::ZERO };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    fn dummy_public() -> ParsedPublic {
+        ParsedPublic {
+            context_hash: [0xAB; 32],
+            pk: [0x55; PK_BYTES],
+            nonce: [0xCD; NONCE_BYTES],
+            nullifier: [0x11; NULLIFIER_LEN],
+            enroll_commit: [0x22; ENROLL_COMMIT_LEN],
+            enroll_nullifier: [0x33; ENROLL_NULLIFIER_LEN],
+            trust_anchor_index: 1,
+        }
+    }
+
+    #[test]
+    fn hash_pub_total_matches_cpp_constant() {
+        // Mirrors `static_assert(kHashPubTotal == 1842)` (p7s_zk.cc:489).
+        assert_eq!(HASH_PUB_TOTAL, 1842);
+        assert_eq!(HASH_PUB_PRE_MAC, 1833);
+        assert_eq!(HASH_MAC_INPUT_WIRES, 9);
+    }
+
+    #[test]
+    fn sig_pub_total_matches_cpp_constant() {
+        // Mirrors `static_assert(kSigPubTotal == 1154)` (p7s_zk.cc:562).
+        assert_eq!(SIG_PUB_TOTAL, 1154);
+        assert_eq!(SIG_MAC_INPUT_WIRES, 1152);
+        assert_eq!(SIG_MAC_INDEX, 2);
+    }
+
+    #[test]
+    fn split_hash_statement_does_not_panic() {
+        let mut buf: Vec<Field2_128> = vec![Field2_128::ZERO; HASH_PUB_TOTAL];
+        let _ = split_hash_statement(&mut buf);
+    }
+
+    #[test]
+    fn split_sig_statement_does_not_panic() {
+        let mut buf: Vec<FieldP256> = vec![FieldP256::ZERO; SIG_PUB_TOTAL];
+        let _ = split_sig_statement(&mut buf);
+    }
+
+    #[test]
+    fn fill_hash_public_pre_mac_writes_implicit_one_and_index() {
+        let mut buf: Vec<Field2_128> = vec![Field2_128::ZERO; HASH_PUB_TOTAL];
+        let pub_ = dummy_public();
+        let mut view = split_hash_statement(&mut buf);
+        fill_hash_public_pre_mac(&mut view, &pub_);
+        // Implicit one slot.
+        assert_eq!(buf[0], Field2_128::ONE);
+        // trust_anchor_index = 1 → bit0 = 1, bits 1..32 = 0.
+        assert_eq!(buf[1801], Field2_128::ONE);
+        for j in 1..32 {
+            assert_eq!(buf[1801 + j], Field2_128::ZERO);
+        }
+        // MAC region untouched (placeholder zeros).
+        for w in &buf[HASH_MAC_INDEX..HASH_PUB_TOTAL] {
+            assert_eq!(*w, Field2_128::ZERO);
+        }
+    }
+
+    #[test]
+    fn fill_hash_public_pre_mac_context_hash_byte_bit_ordering() {
+        // context_hash byte 31 controls wires [248..256) within the
+        // 256-wire context_hash region (which starts at wire 1).
+        // 0xA5 = 0b1010_0101 → LSB-first bits: 1,0,1,0,0,1,0,1.
+        let mut pub_ = dummy_public();
+        pub_.context_hash = [0; 32];
+        pub_.context_hash[31] = 0xA5;
+        let mut buf: Vec<Field2_128> = vec![Field2_128::ZERO; HASH_PUB_TOTAL];
+        let mut view = split_hash_statement(&mut buf);
+        fill_hash_public_pre_mac(&mut view, &pub_);
+        let base = 1 + 248;
+        let expected = [1u8, 0, 1, 0, 0, 1, 0, 1];
+        for (i, &b) in expected.iter().enumerate() {
+            let want = if b == 1 { Field2_128::ONE } else { Field2_128::ZERO };
+            assert_eq!(buf[base + i], want, "context_hash bit {i} mismatch");
+        }
+    }
+
+    #[test]
+    fn fill_hash_public_pre_mac_pk_byte_bit_ordering() {
+        // pk byte 0 controls wires [257..265). 0x55 = 0b0101_0101 →
+        // LSB-first: 1,0,1,0,1,0,1,0.
+        let mut pub_ = dummy_public();
+        pub_.pk = [0; PK_BYTES];
+        pub_.pk[0] = 0x55;
+        let mut buf: Vec<Field2_128> = vec![Field2_128::ZERO; HASH_PUB_TOTAL];
+        let mut view = split_hash_statement(&mut buf);
+        fill_hash_public_pre_mac(&mut view, &pub_);
+        let base = 1 + 256;
+        let expected = [1u8, 0, 1, 0, 1, 0, 1, 0];
+        for (i, &b) in expected.iter().enumerate() {
+            let want = if b == 1 { Field2_128::ONE } else { Field2_128::ZERO };
+            assert_eq!(buf[base + i], want, "pk byte 0 bit {i} mismatch");
+        }
+    }
+
+    #[test]
+    fn fill_sig_public_pre_mac_lifts_trust_anchor_index() {
+        let mut buf: Vec<FieldP256> = vec![FieldP256::ZERO; SIG_PUB_TOTAL];
+        let pub_ = dummy_public();
+        let mut view = split_sig_statement(&mut buf);
+        fill_sig_public_pre_mac(&mut view, &pub_);
+        assert_eq!(buf[0], FieldP256::ONE);
+        assert_eq!(buf[1], FieldP256::from_u128(1));
+        // MAC region untouched.
+        for w in &buf[SIG_MAC_INDEX..SIG_PUB_TOTAL] {
+            assert_eq!(*w, FieldP256::ZERO);
+        }
+    }
+
+    #[test]
+    fn fill_sig_public_pre_mac_index_zero_round_trip() {
+        let mut buf: Vec<FieldP256> = vec![FieldP256::ZERO; SIG_PUB_TOTAL];
+        let mut pub_ = dummy_public();
+        pub_.trust_anchor_index = 0;
+        let mut view = split_sig_statement(&mut buf);
+        fill_sig_public_pre_mac(&mut view, &pub_);
+        assert_eq!(buf[1], FieldP256::ZERO);
+    }
+}
