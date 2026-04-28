@@ -31,9 +31,15 @@
 
 pub mod layout;
 pub mod parser;
+#[cfg(feature = "prover")]
+pub mod prover;
 pub mod public_inputs;
+pub mod verifier;
 pub mod witness;
 
 pub use parser::{parse_public_blob, parse_witness_blob};
+#[cfg(feature = "prover")]
+pub use prover::P7sZkProver;
 pub use public_inputs::ParsedPublic;
+pub use verifier::P7sZkVerifier;
 pub use witness::ParsedWitness;

@@ -6,9 +6,9 @@
 //! unrelated to this work. Integration tests compile against the lib's
 //! public API and don't trigger lib-internal `#[cfg(test)] mod tests`.
 
-use longfellow::p7s_zk::{
-    layout::*,
-    parse_public_blob, parse_witness_blob,
+use longfellow::{
+    ligero::LigeroParameters,
+    p7s_zk::{P7sZkProver, P7sZkVerifier, layout::*, parse_public_blob, parse_witness_blob},
 };
 
 const SPKI_P256_PREFIX: [u8; SPKI_PREFIX_LEN] = [
@@ -263,4 +263,47 @@ fn public_blob_length_is_233() {
     // + 65 pk + 32 nonce + 32 nullifier + 32 enroll_commit + 32
     // enroll_nullifier + 4 trust_anchor_index).
     assert_eq!(build_valid_public_blob().len(), 233);
+}
+
+/// Stub Ligero parameters good enough to exercise the constructor's
+/// type-system surface; not the canonical p7s values. Real parameters
+/// arrive in #74 or #95.
+fn stub_ligero_params() -> LigeroParameters {
+    LigeroParameters {
+        nreq: 189,
+        witnesses_per_row: 64,
+        quadratic_constraints_per_row: 64,
+        block_size: 256,
+        num_columns: 1024,
+    }
+}
+
+#[test]
+fn prover_rejects_empty_circuit_bytes() {
+    let params = stub_ligero_params();
+    match P7sZkProver::new(&[], params.clone(), params) {
+        Ok(_) => panic!("empty circuit bytes must reject"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(
+                s.contains("p7s: failed to decode hash circuit") || s.contains("hash"),
+                "unexpected error: {s}"
+            );
+        }
+    }
+}
+
+#[test]
+fn verifier_rejects_empty_circuit_bytes() {
+    let params = stub_ligero_params();
+    match P7sZkVerifier::new(&[], params.clone(), params) {
+        Ok(_) => panic!("empty circuit bytes must reject"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(
+                s.contains("p7s: failed to decode hash circuit") || s.contains("hash"),
+                "unexpected error: {s}"
+            );
+        }
+    }
 }
