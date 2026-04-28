@@ -381,6 +381,37 @@ pub(crate) fn fill_sig_mac_region(
     debug_assert_eq!(wire_idx, SIG_MAC_INPUT_WIRES);
 }
 
+/// Allocate and fully-fill a hash-side public-input region. Returns a
+/// `Vec<Field2_128>` pre-sized to `HASH_PUB_TOTAL` with the public region
+/// initialized; the MAC sub-region is left at `Field2_128::ZERO` placeholders
+/// (overwritten post-commit by `fill_hash_mac_region`).
+///
+/// Shared by both prover (sub-PR 8) and verifier (sub-PR 9) — must be
+/// reachable under `--no-default-features --features verifier`, hence its
+/// placement here in `layout.rs` rather than the prover-gated
+/// `witness_fill.rs`.
+pub(crate) fn build_hash_public_region(pub_: &ParsedPublic) -> alloc::vec::Vec<Field2_128> {
+    let mut buf = alloc::vec![Field2_128::ZERO; HASH_PUB_TOTAL];
+    {
+        let mut view = split_hash_statement(&mut buf);
+        fill_hash_public_pre_mac(&mut view, pub_);
+    }
+    buf
+}
+
+/// Allocate and fully-fill a sig-side public-input region. Returns a
+/// `Vec<FieldP256>` pre-sized to `SIG_PUB_TOTAL`; the MAC sub-region is left
+/// at `FieldP256::ZERO` placeholders (overwritten post-commit by
+/// `fill_sig_mac_region`).
+pub(crate) fn build_sig_public_region(pub_: &ParsedPublic) -> alloc::vec::Vec<FieldP256> {
+    let mut buf = alloc::vec![FieldP256::ZERO; SIG_PUB_TOTAL];
+    {
+        let mut view = split_sig_statement(&mut buf);
+        fill_sig_public_pre_mac(&mut view, pub_);
+    }
+    buf
+}
+
 // ---------------------------------------------------------------------------
 // Bit-pushing primitives (mirror C++ push_v8 / push_uint / push_target)
 // ---------------------------------------------------------------------------

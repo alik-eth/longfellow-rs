@@ -327,69 +327,10 @@ fn field_p256_from_be_bytes(be: &[u8; 32]) -> Option<FieldP256> {
     FieldP256::try_from(&le).ok()
 }
 
-/// Allocate and fully-fill a hash-side public-input region. Returns the
-/// `Vec<Field2_128>` pre-sized to `HASH_PUB_TOTAL` with the public region
-/// initialized; the MAC sub-region is left at `Field2_128::ZERO` placeholders
-/// (overwritten post-commit by `fill_hash_mac_region`).
-pub(crate) fn build_hash_public_region(pub_: &ParsedPublic) -> Vec<Field2_128> {
-    let mut buf = alloc::vec![Field2_128::ZERO; HASH_PUB_TOTAL];
-    {
-        let mut view = split_hash_statement(&mut buf);
-        fill_hash_public_pre_mac(&mut view, pub_);
-        // mac_region pre-filled with ZERO placeholders by alloc::vec!.
-    }
-    buf
-}
-
-/// Allocate and fully-fill a sig-side public-input region. Returns the
-/// `Vec<FieldP256>` pre-sized to `SIG_PUB_TOTAL`; the MAC sub-region is left
-/// at `FieldP256::ZERO` placeholders (overwritten post-commit by
-/// `fill_sig_mac_region`).
-pub(crate) fn build_sig_public_region(pub_: &ParsedPublic) -> Vec<FieldP256> {
-    let mut buf = alloc::vec![FieldP256::ZERO; SIG_PUB_TOTAL];
-    {
-        let mut view = split_sig_statement(&mut buf);
-        fill_sig_public_pre_mac(&mut view, pub_);
-    }
-    buf
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn build_hash_public_region_has_correct_length() {
-        let pub_ = ParsedPublic {
-            context_hash: [0u8; 32],
-            pk: [0u8; 65],
-            nonce: [0u8; 32],
-            nullifier: [0u8; 32],
-            enroll_commit: [0u8; 32],
-            enroll_nullifier: [0u8; 32],
-            trust_anchor_index: 0,
-        };
-        let buf = build_hash_public_region(&pub_);
-        assert_eq!(buf.len(), HASH_PUB_TOTAL);
-        // First wire is the const-1 (set by fill_hash_public_pre_mac).
-        assert_eq!(buf[0], Field2_128::ONE);
-    }
-
-    #[test]
-    fn build_sig_public_region_has_correct_length() {
-        let pub_ = ParsedPublic {
-            context_hash: [0u8; 32],
-            pk: [0u8; 65],
-            nonce: [0u8; 32],
-            nullifier: [0u8; 32],
-            enroll_commit: [0u8; 32],
-            enroll_nullifier: [0u8; 32],
-            trust_anchor_index: 0,
-        };
-        let buf = build_sig_public_region(&pub_);
-        assert_eq!(buf.len(), SIG_PUB_TOTAL);
-        assert_eq!(buf[0], FieldP256::ONE);
-    }
 
     #[test]
     fn reverse_to_le_swaps_endianness() {

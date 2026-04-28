@@ -22,8 +22,8 @@ use crate::{
         ecdsa_witness::compute_ecdsa_witness_wires,
         layout::{
             BLOB_SCHEMA_VERSION, HASH_PUB_TOTAL, SIG_PUB_TOTAL, SPKI_PREFIX_LEN,
-            fill_hash_mac_region, fill_sig_mac_region, split_hash_statement,
-            split_sig_statement,
+            build_hash_public_region, build_sig_public_region, fill_hash_mac_region,
+            fill_sig_mac_region, split_hash_statement, split_sig_statement,
         },
         mac::{
             FIELD2_128_BYTES, TOTAL_MAC_VALUES, compute_all_macs, field_to_le_bytes, sample_ap,
@@ -35,7 +35,7 @@ use crate::{
         witness::ParsedWitness,
         witness_fill::{
             HashSideShaWitnesses, SPKI_XY_LEN, append_hash_private_region,
-            append_sig_private_region, build_hash_public_region, build_sig_public_region,
+            append_sig_private_region,
         },
     },
     sumcheck::{ProverResult, SumcheckProtocol, initialize_transcript},
