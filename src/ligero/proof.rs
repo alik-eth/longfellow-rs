@@ -6,17 +6,12 @@
 use crate::{
     Codec, ParameterizedCodec,
     fields::{CodecFieldElement, ProofFieldElement},
-    ligero::{
-        Nonce,
-        merkle::InclusionProof,
-        tableau::TableauLayout,
-    },
-    sumcheck::constraints::{
-        LinearConstraintLhsTerm, LinearConstraints, QuadraticConstraint,
-    },
+    io::{self, Write},
+    ligero::{Nonce, merkle::InclusionProof, tableau::TableauLayout},
+    sumcheck::constraints::{LinearConstraintLhsTerm, LinearConstraints, QuadraticConstraint},
 };
+use alloc::{vec, vec::Vec};
 use anyhow::{Context, anyhow};
-use std::io::{self, Write};
 
 const MAX_RUN_LENGTH: usize = 1 << 25;
 

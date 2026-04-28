@@ -12,14 +12,15 @@ use crate::{
         fieldp256_2::FieldP256_2,
     },
 };
+use crate::io::{self, Cursor, Read, Write};
+use alloc::{string::String, vec::Vec};
 use anyhow::{Context, anyhow};
-use serde::{Deserialize, Serialize, de::Error as _, ser::Error as _};
-use std::{
+use core::{
     cmp::Ordering,
     fmt::{self, Debug},
-    io::{self, Cursor, Read, Write},
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
+use serde::{Deserialize, Serialize, de::Error as _, ser::Error as _};
 use subtle::{ConditionallySelectable, ConstantTimeEq, CtOption};
 
 use super::FieldId;

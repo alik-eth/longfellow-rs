@@ -16,6 +16,7 @@ use crate::{
     transcript::Transcript,
     witness::WitnessLayout,
 };
+use alloc::vec::Vec;
 use anyhow::{Context, anyhow};
 use sha2::{Digest, Sha256};
 

@@ -1,16 +1,14 @@
 use crate::{
     Codec, ParameterizedCodec, Sha256Digest, Size,
     fields::{CodecFieldElement, FieldId},
+    io::{Cursor, Write},
     sumcheck::bind::sparse::{SparseQuadElement, SparseSumcheckArray},
 };
+use alloc::{collections::BTreeSet, format, vec, vec::Vec};
 use anyhow::{Context, anyhow};
+use core::fmt::{self, Formatter};
 use educe::Educe;
 use sha2::{Digest, Sha256};
-use std::{
-    collections::HashSet,
-    fmt::{self, Formatter},
-    io::{Cursor, Write},
-};
 
 /// A circuit, serialized according to the ad-hoc definition in [1] and [2].
 ///
@@ -212,7 +210,7 @@ impl<FE: CodecFieldElement> Circuit<FE> {
             let mut gate_outputs = vec![FE::ZERO; next_layer_num_wires];
 
             // Note which gates receive contributions from Z quads.
-            let mut z_gate_indexes = HashSet::new();
+            let mut z_gate_indexes = BTreeSet::new();
 
             for (quad_index, quad) in layer.quads.iter().enumerate() {
                 // Evaluate this quad: look up its value in the constants table, then multiply that
@@ -406,8 +404,8 @@ impl<FE: CodecFieldElement> Circuit<FE> {
 
         let mut quads_count = 0;
         for (layer_index, layer) in self.layers.iter().enumerate() {
-            let mut q_quad_gates = HashSet::new();
-            let mut z_quad_gates = HashSet::new();
+            let mut q_quad_gates = BTreeSet::new();
+            let mut z_quad_gates = BTreeSet::new();
 
             for (quad_index, quad) in layer.quads.iter().enumerate() {
                 assert!(quad.left_wire_index < layer.num_wires());

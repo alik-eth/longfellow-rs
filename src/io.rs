@@ -146,6 +146,23 @@ mod no_std_io {
         }
     }
 
+    /// `Write` impl for `Cursor<T>` where `T: AsMut<[u8]>` mirrors the relevant subset of
+    /// `std::io::Write for Cursor<T>`: writes copy bytes into the inner buffer at the current
+    /// position, and the position advances. Writing past the buffer returns `WriteZero`.
+    impl<T: AsMut<[u8]> + AsRef<[u8]>> Write for Cursor<T> {
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
+            let pos = self.pos as usize;
+            let inner = self.inner.as_mut();
+            let end = pos.saturating_add(buf.len());
+            if end > inner.len() {
+                return Err(Error::new(ErrorKind::WriteZero, "cursor write past end"));
+            }
+            inner[pos..end].copy_from_slice(buf);
+            self.pos = end as u64;
+            Ok(())
+        }
+    }
+
     /// Read a little-endian u24 from a `Cursor` and advance by 3 bytes.
     pub fn read_u24_le<T: AsRef<[u8]>>(cursor: &mut Cursor<T>) -> Result<u32, Error> {
         let mut buf = [0u8; 3];

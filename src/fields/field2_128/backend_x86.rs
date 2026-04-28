@@ -1,10 +1,10 @@
 #[cfg(target_arch = "x86")]
-use std::arch::x86::{
+use core::arch::x86::{
     __m128i, _mm_clmulepi64_si128, _mm_cvtsi128_si32, _mm_set_epi64x, _mm_slli_si128,
     _mm_srli_si128, _mm_xor_si128,
 };
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{
+use core::arch::x86_64::{
     __m128i, _mm_clmulepi64_si128, _mm_cvtsi128_si64, _mm_set_epi64x, _mm_slli_si128,
     _mm_srli_si128, _mm_xor_si128,
 };

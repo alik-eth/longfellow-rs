@@ -1,5 +1,6 @@
 use crate::fields::{FieldElement, NttFieldElement};
-use std::{cmp, iter};
+use alloc::{vec, vec::Vec};
+use core::{cmp, iter};
 
 /// Precomputed values for the convolution-based implementation of `extend()`.
 pub struct ExtendContext<FE> {

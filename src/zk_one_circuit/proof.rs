@@ -6,12 +6,13 @@
 use crate::{
     Codec, ParameterizedCodec,
     fields::{CodecFieldElement, ProofFieldElement},
+    io::{Cursor, Write},
     ligero::{merkle::Root, proof::LigeroProof},
     sumcheck::SumcheckProof,
     zk_one_circuit::verifier::Verifier,
 };
+use alloc::vec::Vec;
 use anyhow::anyhow;
-use std::io::{Cursor, Write};
 
 /// Longfellow ZK proof.
 #[derive(Clone, Debug, PartialEq, Eq)]

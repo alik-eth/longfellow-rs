@@ -3,11 +3,15 @@
 //! [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-4
 
 use crate::{
-    Codec, fields::CodecFieldElement, ligero::tableau::TableauLayout, transcript::Transcript,
+    Codec,
+    fields::CodecFieldElement,
+    io::{self, Write},
+    ligero::tableau::TableauLayout,
+    transcript::Transcript,
 };
+use alloc::vec::Vec;
 use anyhow::anyhow;
 use serde::Deserialize;
-use std::io::{self, Write};
 
 pub mod merkle;
 pub mod proof;

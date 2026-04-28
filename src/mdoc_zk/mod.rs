@@ -2,38 +2,48 @@ use crate::{
     Codec, ParameterizedCodec,
     circuit::Circuit,
     fields::{CodecFieldElement, FieldElement, field2_128::Field2_128, fieldp256::FieldP256},
+    io::{Cursor, Write},
     ligero::{LigeroParameters, merkle::Root, proof::LigeroProof, tableau::TableauLayout},
     mdoc_zk::{
         bit_plucker::BitPlucker,
-        ec::{AffinePoint, fill_ecdsa_witness},
+        ec::AffinePoint,
         layout::{
             ATTRIBUTE_CBOR_DATA_LENGTH_V6, ATTRIBUTE_CBOR_IDENTIFIER_LENGTH_V7,
-            ATTRIBUTE_CBOR_VALUE_LENGTH_V7, AttributeInputV6, AttributeInputV7, AttributeWitnessV6,
-            EcdsaWitness, InputLayout, SHA_256_CREDENTIAL_KNOWN_PREFIX_BYTES,
+            ATTRIBUTE_CBOR_VALUE_LENGTH_V7, AttributeInputV6, AttributeInputV7, InputLayout,
+            SHA_256_CREDENTIAL_KNOWN_PREFIX_BYTES,
         },
-        mdoc::{
-            ENCODED_CBOR_PREFIX_LENGTH, Mdoc, ParsedAttribute, compute_credential_hash,
-            compute_session_transcript_hash, find_attributes, hash_to_field_element,
-            parse_device_response,
-        },
-        sha256::run_sha256_witnessed,
     },
     sumcheck::SumcheckProof,
 };
-use anyhow::{Context, anyhow};
-use std::{
-    borrow::Cow,
-    io::{Cursor, Write},
+#[cfg(feature = "prover")]
+use crate::mdoc_zk::{
+    ec::fill_ecdsa_witness,
+    layout::{AttributeWitnessV6, EcdsaWitness},
+    mdoc::{
+        ENCODED_CBOR_PREFIX_LENGTH, Mdoc, ParsedAttribute, compute_credential_hash,
+        compute_session_transcript_hash, find_attributes, hash_to_field_element,
+        parse_device_response,
+    },
+    sha256::run_sha256_witnessed,
 };
+use alloc::{
+    borrow::{Cow, ToOwned},
+    string::String,
+    vec,
+    vec::Vec,
+};
+use anyhow::{Context, anyhow};
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
 mod bit_plucker;
 mod ec;
 mod layout;
+#[cfg(feature = "prover")]
 mod mdoc;
 #[cfg(feature = "prover")]
 pub mod prover;
+#[cfg(feature = "prover")]
 mod sha256;
 pub mod verifier;
 
@@ -47,6 +57,7 @@ pub enum CircuitVersion {
 }
 
 /// Inputs for the mdoc_zk circuits.
+#[cfg(feature = "prover")]
 pub struct CircuitInputs {
     layout: InputLayout,
     signature_input: Vec<FieldP256>,
@@ -54,6 +65,7 @@ pub struct CircuitInputs {
     mac_messages: [Field2_128; 6],
 }
 
+#[cfg(feature = "prover")]
 impl CircuitInputs {
     /// Construct inputs for the signature and hash circuits.
     pub fn new(
@@ -662,11 +674,13 @@ fn u2_as_bits(mut u2: u8, out: &mut [Field2_128; 2]) -> Result<(), anyhow::Error
 }
 
 /// Public inputs for the mdoc_zk circuits.
+#[cfg(feature = "prover")]
 pub struct CircuitStatements {
     signature_statement: Vec<FieldP256>,
     hash_statement: Vec<Field2_128>,
 }
 
+#[cfg(feature = "prover")]
 impl CircuitStatements {
     /// Construct statements for the signature and hash circuits.
     #[allow(clippy::too_many_arguments)]
@@ -820,7 +834,12 @@ impl<'a> PublicAttribute<'a> {
         cursor
             .write_all(&self.identifier)
             .context("attribute identifier is too long")?;
-        ciborium::into_writer("elementValue", &mut cursor)
+        // CBOR encoding of the text string "elementValue" (12 bytes): major type 3, length 12.
+        cursor
+            .write_all(&[0x60 | 12])
+            .context("attribute contents are too long")?;
+        cursor
+            .write_all(b"elementValue")
             .context("attribute contents are too long")?;
         cursor
             .write_all(&self.value)

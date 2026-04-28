@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
 extern crate alloc;
 
 use crate::io::{Cursor, Read, Write, read_u24_le, write_u24_le};
@@ -357,6 +359,32 @@ impl<C: Codec, T> ParameterizedCodec<T> for C {
         bytes: &mut W,
     ) -> Result<(), anyhow::Error> {
         self.encode(bytes)
+    }
+}
+
+// no_std stubs for the cdylib/staticlib artifacts that `cargo check` builds even when consumers
+// only need the rlib. These never run — SP1's zkvm runtime (or any other consumer) supplies real
+// allocator + panic_handler when actually linking. Gated to (no std) + (no prover) so it cannot
+// collide with consumers that bring their own.
+#[cfg(all(not(feature = "std"), not(feature = "prover")))]
+mod no_std_artifact_stubs {
+    use core::alloc::{GlobalAlloc, Layout};
+
+    struct NoopAlloc;
+
+    unsafe impl GlobalAlloc for NoopAlloc {
+        unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
+            core::ptr::null_mut()
+        }
+        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+    }
+
+    #[global_allocator]
+    static GLOBAL: NoopAlloc = NoopAlloc;
+
+    #[panic_handler]
+    fn panic(_info: &core::panic::PanicInfo) -> ! {
+        loop {}
     }
 }
 

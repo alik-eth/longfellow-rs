@@ -1,4 +1,4 @@
-use std::{
+use core::{
     fmt::{self, Debug},
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };

@@ -2,13 +2,15 @@
 //!
 //! [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-4.1
 
-use crate::{Codec, Sha256Digest, ligero::Nonce};
-use anyhow::{Context, anyhow};
-use sha2::{Digest, Sha256};
-use std::{
-    fmt::Debug,
+use crate::{
+    Codec, Sha256Digest,
     io::{self, Write},
+    ligero::Nonce,
 };
+use alloc::{vec, vec::Vec};
+use anyhow::{Context, anyhow};
+use core::fmt::Debug;
+use sha2::{Digest, Sha256};
 
 /// The value of a node of a [`MerkleTree`]. A tree could use various hashing algorithms, but we
 /// only support SHA-256, and so a `Digest` is always a 32 byte array, saving us a heap allocation.
@@ -59,7 +61,7 @@ impl From<Root> for Node {
 }
 
 impl Codec for Node {
-    fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+    fn decode(bytes: &mut crate::io::Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
         Sha256Digest::decode(bytes).map(Self)
     }
 
@@ -69,7 +71,7 @@ impl Codec for Node {
 }
 
 impl Debug for Node {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("Node").field(&hex::encode(self.0.0)).finish()
     }
 }
@@ -85,7 +87,7 @@ pub struct InclusionProof(Vec<Node>);
 ///
 /// [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-7.4
 impl Codec for InclusionProof {
-    fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
+    fn decode(bytes: &mut crate::io::Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
         let length = usize::try_from(u32::decode(bytes)?)
             .context("inclusion proof length too large for usize")?;
         let remaining = bytes.get_ref().len()

@@ -11,7 +11,8 @@ use aes::{
 use anyhow::{Context, anyhow};
 use crypto_common::{BlockSizeUser, generic_array::GenericArray};
 use sha2::{Digest, Sha256};
-use std::{cmp::min, fmt::Debug};
+use alloc::{vec, vec::Vec};
+use core::{cmp::min, fmt::Debug};
 
 /// A transcript of the prover's execution of a protocol, used to generate the verifier's public
 /// coin challenges based on the state of the transcript at some moment.
@@ -240,7 +241,7 @@ impl Transcript {
 
         let mut buffer = vec![0; FE::num_bytes()];
         Ok(
-            std::iter::repeat_with(|| fsprf.sample_field_element(&mut buffer))
+            core::iter::repeat_with(|| fsprf.sample_field_element(&mut buffer))
                 .take(length)
                 .collect(),
         )

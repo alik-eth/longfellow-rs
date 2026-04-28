@@ -6,6 +6,7 @@ use crate::{
     ParameterizedCodec,
     circuit::{Circuit, CircuitLayer, Evaluation},
     fields::{CodecFieldElement, ProofFieldElement},
+    io::Write,
     sumcheck::{
         bind::{Binding, DenseSumcheckArray, bindeq},
         constraints::{LinearConstraints, SymbolicExpression, Term},
@@ -13,8 +14,8 @@ use crate::{
     transcript::Transcript,
     witness::{Witness, WitnessLayout},
 };
+use alloc::{borrow::Cow, vec, vec::Vec};
 use anyhow::anyhow;
-use std::{borrow::Cow, io::Write};
 
 pub mod bind;
 pub mod constraints;
@@ -634,7 +635,7 @@ pub struct SumcheckProof<FieldElement> {
 impl<FE: CodecFieldElement> ParameterizedCodec<Circuit<FE>> for SumcheckProof<FE> {
     fn decode_with_param(
         circuit: &Circuit<FE>,
-        bytes: &mut std::io::Cursor<&[u8]>,
+        bytes: &mut crate::io::Cursor<&[u8]>,
     ) -> Result<Self, anyhow::Error> {
         let mut proof_layers = Vec::with_capacity(circuit.num_layers());
 
@@ -681,7 +682,7 @@ pub struct ProofLayer<FieldElement> {
 impl<FE: CodecFieldElement> ParameterizedCodec<CircuitLayer> for ProofLayer<FE> {
     fn decode_with_param(
         circuit_layer: &CircuitLayer,
-        bytes: &mut std::io::Cursor<&[u8]>,
+        bytes: &mut crate::io::Cursor<&[u8]>,
     ) -> Result<Self, anyhow::Error> {
         // The specification's "wires" corresponds to our "polynomials".
         // For each bit needed to describe a wire (logw), we have two hands and two polynomial

@@ -3,15 +3,19 @@ use crate::{
     circuit::Circuit,
     fields::{field2_128::Field2_128, fieldp256::FieldP256},
     ligero::verifier::LigeroVerifier,
-    mdoc_zk::{
-        CircuitStatements, CircuitVersion, MdocZkProof, ProofContext, PublicAttribute,
-        common_initialization,
-    },
+    mdoc_zk::{CircuitVersion, MdocZkProof, ProofContext, common_initialization},
     sumcheck::{SumcheckProtocol, initialize_transcript},
     transcript::{Transcript, TranscriptMode},
 };
+#[cfg(feature = "prover")]
+use crate::mdoc_zk::{CircuitStatements, PublicAttribute};
+use alloc::{string::String, vec::Vec};
+#[cfg(feature = "prover")]
+use alloc::borrow::Cow;
+#[cfg(feature = "prover")]
 use anyhow::{Context, anyhow};
-use std::borrow::Cow;
+#[cfg(not(feature = "prover"))]
+use anyhow::anyhow;
 
 /// Zero-knowledge verifier for mdoc credential presentations.
 #[cfg_attr(feature = "mobile", derive(uniffi::Object))]
@@ -65,6 +69,12 @@ impl MdocZkVerifier {
     ///   protocol handover.
     /// * `time`: The current time, in RFC 3339 format.
     /// * `proof`: The serialized proof.
+    // High-level mdoc verify path: requires CBOR parsing of the session transcript via the
+    // prover-side `compute_session_transcript_hash`, so it is gated to `feature = "prover"`.
+    // The `--features verifier --no-default-features` (no_std / SP1 / riscv32) build skips this
+    // and exposes only the proof-decode + Sumcheck/Ligero primitives, with the SP1 wrapper
+    // pre-extracting hashed inputs (see Phase 4 of the migration spec).
+    #[cfg(feature = "prover")]
     #[allow(clippy::too_many_arguments)]
     pub fn verify(
         &self,
@@ -183,11 +193,22 @@ pub struct Attribute {
     pub value_cbor: Vec<u8>,
 }
 
+#[cfg(feature = "prover")]
 impl Attribute {
     pub(super) fn as_public_attribute(&self) -> Result<PublicAttribute<'_>, anyhow::Error> {
-        let mut identifier_cbor = Vec::with_capacity(self.identifier.len() + 2);
-        ciborium::into_writer(&self.identifier, &mut identifier_cbor)
-            .context("failed to serialize identifier")?;
+        let len = self.identifier.len();
+        // Encode `identifier` as a CBOR text string. Major type 3 = 0x60.
+        // We only need single-byte and 1-byte length forms (identifiers are well below 256 bytes).
+        let mut identifier_cbor = Vec::with_capacity(len + 2);
+        if len < 24 {
+            identifier_cbor.push(0x60 | (len as u8));
+        } else if len < 256 {
+            identifier_cbor.push(0x78);
+            identifier_cbor.push(len as u8);
+        } else {
+            return Err(anyhow!("attribute identifier too long for verifier path"));
+        }
+        identifier_cbor.extend_from_slice(self.identifier.as_bytes());
         Ok(PublicAttribute {
             identifier: Cow::Owned(identifier_cbor),
             value: Cow::Borrowed(&self.value_cbor),

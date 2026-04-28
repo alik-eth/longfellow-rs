@@ -5,10 +5,12 @@ use crate::{
     fields::{
         CodecFieldElement, FieldElement, fieldp256::FieldP256, fieldp256_scalar::FieldP256Scalar,
     },
-    mdoc_zk::EcdsaWitness,
 };
+#[cfg(feature = "prover")]
+use crate::mdoc_zk::EcdsaWitness;
+use alloc::vec::Vec;
 use anyhow::anyhow;
-use std::ops::Add;
+use core::ops::Add;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 /// An elliptic curve point, represented with affine coordinates.
@@ -482,6 +484,7 @@ impl Signature {
     }
 }
 
+#[cfg(feature = "prover")]
 pub(super) fn fill_ecdsa_witness<'a, 'b: 'a>(
     witness: &'b mut EcdsaWitness<'a>,
     public_key: AffinePoint,
@@ -538,6 +541,7 @@ fn embed_scalar_in_base_field(scalar: FieldP256Scalar) -> FieldP256 {
 }
 
 /// Perform the multi-scalar multiplication G*e + Q*r - R*s, and record related witnesses.
+#[cfg(feature = "prover")]
 fn multi_scalar_multiplication<'a, 'b: 'a>(
     witness: &'b mut EcdsaWitness<'a>,
     g: AffinePoint,

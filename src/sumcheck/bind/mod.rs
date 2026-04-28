@@ -4,6 +4,7 @@
 //! [1]: https://datatracker.ietf.org/doc/html/draft-google-cfrg-libzk-01#section-6.1
 
 use crate::fields::{FieldElement, ProofFieldElement};
+use alloc::{vec, vec::Vec};
 
 pub mod sparse;
 #[cfg(test)]

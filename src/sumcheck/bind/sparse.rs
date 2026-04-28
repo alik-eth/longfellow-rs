@@ -163,9 +163,10 @@ use crate::{
     fields::FieldElement,
     sumcheck::{Hand, bind::bindeq},
 };
+use alloc::vec::Vec;
+use core::cmp::Ordering;
 use educe::Educe;
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 
 /// A sparse 3D array indexed by `g` (gate number), `l` (input left wire index) and `r` (input right
 /// wire index) where the value is a coefficient. See [1].
@@ -247,7 +248,7 @@ impl<'a, FE: FieldElement> SparseQuadElement<FE> {
 }
 
 impl<FE: FieldElement> PartialOrd for SparseQuadElement<FE> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }

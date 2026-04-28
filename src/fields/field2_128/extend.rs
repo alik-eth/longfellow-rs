@@ -6,7 +6,8 @@ use crate::fields::{
     FieldElement,
     field2_128::{Field2_128, constants::twiddle_array_at},
 };
-use std::cmp::min;
+use alloc::{vec, vec::Vec};
+use core::cmp::min;
 
 #[derive(Copy, Clone)]
 pub struct ExtendContext {

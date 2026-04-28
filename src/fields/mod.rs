@@ -4,6 +4,7 @@ use crate::{
     fields::{field2_128::Field2_128, fieldp128::FieldP128, fieldp256::FieldP256},
     io::{Cursor, Write},
 };
+use alloc::{vec, vec::Vec};
 use anyhow::{Context, anyhow};
 use core::{
     fmt::Debug,
@@ -295,7 +296,7 @@ where
     FE: CodecFieldElement,
     F: FnMut() -> FE,
 {
-    std::iter::repeat_with(source)
+    core::iter::repeat_with(source)
 }
 
 /// Field identifier. According to the draft specification, the encoding is of variable length ([1])

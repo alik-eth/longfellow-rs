@@ -11,11 +11,12 @@ use crate::{
         },
     },
 };
+use crate::io::{self, Read, Write};
+use alloc::vec::Vec;
 use anyhow::{Context, anyhow};
-use std::{
+use core::{
     cmp::Ordering,
     fmt::{self, Debug},
-    io::{self, Read, Write},
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};

@@ -5,7 +5,8 @@ use crate::{
     fields::{CodecFieldElement, FieldElement},
     sumcheck::Polynomial,
 };
-use std::ops::Range;
+use alloc::vec::Vec;
+use core::ops::Range;
 
 /// The layout of the witness vector W. This is a 1D vector containing values known to the prover
 /// but not the verifier:
@@ -180,7 +181,7 @@ impl<FE: FieldElement> Witness<FE> {
             .iter()
             .skip(start)
             .copied()
-            .chain(std::iter::repeat(FE::ZERO))
+            .chain(core::iter::repeat(FE::ZERO))
             .take(count)
     }
 }

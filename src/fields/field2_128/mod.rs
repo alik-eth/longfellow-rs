@@ -9,19 +9,20 @@ use crate::{
         field2_128::extend::{ExtendContext, interpolate},
     },
 };
+use crate::io::{Cursor, Read, Write};
+use alloc::{string::String, vec::Vec};
 use anyhow::{Context, anyhow};
 use constants::{subfield_basis, subfield_basis_lu_decomposition};
-use serde::{Deserialize, Serialize, de::Error as _, ser::Error as _};
-use sha2::{Digest, Sha256};
-#[cfg(target_arch = "aarch64")]
-use std::arch::is_aarch64_feature_detected;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::{
+use core::{
     fmt::Debug,
-    io::{Cursor, Read, Write},
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
+#[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+use core::sync::atomic::{AtomicU8, Ordering};
+use serde::{Deserialize, Serialize, de::Error as _, ser::Error as _};
+use sha2::{Digest, Sha256};
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
+use std::arch::is_aarch64_feature_detected;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 /// An element of the field GF(2^128).
@@ -235,7 +236,7 @@ impl ProofFieldElement for Field2_128 {
 }
 
 impl Debug for Field2_128 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Field2_128(0x{:032x})", self.0)
     }
 }
@@ -380,12 +381,12 @@ impl ConditionallySelectable for Field2_128 {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
 mod backend_aarch64;
 mod backend_bit_slicing;
 #[cfg(test)]
 mod backend_naive_loop;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "std"))]
 mod backend_x86;
 mod constants;
 mod extend;
@@ -430,11 +431,11 @@ impl CachedFeatureFlag {
     }
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "std"))]
 static FEATURES: CachedFeatureFlag = CachedFeatureFlag::new(|| {
     is_x86_feature_detected!("sse2") && is_x86_feature_detected!("pclmulqdq")
 });
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
 static FEATURES: CachedFeatureFlag = CachedFeatureFlag::new(|| {
     is_aarch64_feature_detected!("neon") && is_aarch64_feature_detected!("aes")
 });
@@ -444,11 +445,11 @@ static FEATURES: CachedFeatureFlag = CachedFeatureFlag::new(|| {
 /// This dispatches to an appropriate implementation depending on CPU support, or a fallback
 /// implementation.
 fn galois_multiply(x: u128, y: u128) -> u128 {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "std"))]
     if FEATURES.get() {
         return unsafe { backend_x86::galois_multiply(x, y) };
     }
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", feature = "std"))]
     if FEATURES.get() {
         return unsafe { backend_aarch64::galois_multiply(x, y) };
     }
@@ -460,11 +461,11 @@ fn galois_multiply(x: u128, y: u128) -> u128 {
 /// This dispatches to an appropriate implementation depending on CPU support, or a fallback
 /// implementation.
 fn galois_square(x: u128) -> u128 {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "std"))]
     if FEATURES.get() {
         return unsafe { backend_x86::galois_square(x) };
     }
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", feature = "std"))]
     if FEATURES.get() {
         return unsafe { backend_aarch64::galois_square(x) };
     }

@@ -11,6 +11,7 @@ use crate::{
     sumcheck::constraints::QuadraticConstraint,
     witness::Witness,
 };
+use alloc::{vec, vec::Vec};
 #[cfg(feature = "prover")]
 use rand::{RngCore, random};
 use sha2::{Digest, Sha256};
@@ -222,7 +223,7 @@ impl<FE: ProofFieldElement> Tableau<FE> {
         let mut index = 0;
         let mut row_random_elements = element_generator.by_ref().take(layout.dblock() - 1);
 
-        let mut linear_test_row: Vec<_> = std::iter::from_fn(|| {
+        let mut linear_test_row: Vec<_> = core::iter::from_fn(|| {
             let element = if index == layout.num_requested_columns() {
                 // Reserve the first witness spot for the additive inverse of the sum of the
                 // remaining witnesses. Per the spec we could put this element anywhere in the
@@ -262,7 +263,7 @@ impl<FE: ProofFieldElement> Tableau<FE> {
         // Quadratic test row: NREQ random elements then zeroes for each witness, then more random
         // elements to fill to DBLOCK, then extended to NCOL
         let mut index = 0;
-        let quadratic_test_row: Vec<_> = std::iter::from_fn(|| {
+        let quadratic_test_row: Vec<_> = core::iter::from_fn(|| {
             let next = if index < layout.num_requested_columns() || index >= layout.block_size() {
                 element_generator.next()
             } else {

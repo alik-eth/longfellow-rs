@@ -8,8 +8,9 @@ use crate::{
     fields::{CodecFieldElement, FieldElement, ProofFieldElement},
     witness::WitnessLayout,
 };
+use alloc::vec::Vec;
+use core::ops::{Add, AddAssign, Mul, MulAssign};
 use serde::Deserialize;
-use std::ops::{Add, AddAssign, Mul, MulAssign};
 
 /// A term of a linear constraint consisting of a triple (c, j, k), per [4.4.2][1]. This is one
 /// element of the constraint matrix A for verifying that A * W = b. Several of these terms sum
