@@ -41,6 +41,7 @@ pub mod params;
 pub mod parser;
 #[cfg(feature = "prover")]
 pub(crate) mod preimages;
+pub mod proof;
 #[cfg(feature = "prover")]
 pub mod prover;
 pub mod public_inputs;
@@ -56,7 +57,7 @@ pub(crate) mod witness_fill;
 pub use params::{P7S_NREQ, P7S_RATE_INV, default_ligero_params_for_circuit};
 pub use parser::{parse_public_blob, parse_witness_blob};
 #[cfg(feature = "prover")]
-pub use prover::P7sZkProver;
+pub use prover::{P7sV12PublicOutputs, P7sZkProver};
 pub use public_inputs::ParsedPublic;
 pub use verifier::P7sZkVerifier;
 pub use witness::ParsedWitness;
