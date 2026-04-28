@@ -46,6 +46,8 @@ pub mod public_inputs;
 pub(crate) mod sha256_witness;
 pub mod verifier;
 pub mod witness;
+#[cfg(feature = "prover")]
+pub(crate) mod witness_fill;
 
 pub use params::{P7S_NREQ, P7S_RATE_INV, default_ligero_params_for_circuit};
 pub use parser::{parse_public_blob, parse_witness_blob};
