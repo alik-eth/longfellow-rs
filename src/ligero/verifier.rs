@@ -8,7 +8,7 @@ use crate::{
     ligero::{
         LigeroChallenges, LigeroParameters,
         merkle::{MerkleTree, Node, Root},
-        prover::{LigeroProof, inner_product_vector},
+        proof::{LigeroProof, inner_product_vector},
         tableau::TableauLayout,
         write_hash_of_a, write_proof,
     },

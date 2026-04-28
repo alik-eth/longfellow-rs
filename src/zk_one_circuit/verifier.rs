@@ -4,7 +4,7 @@ use crate::{
     ligero::{LigeroParameters, tableau::TableauLayout, verifier::LigeroVerifier},
     sumcheck::{SumcheckProtocol, initialize_transcript},
     transcript::{Transcript, TranscriptMode},
-    zk_one_circuit::prover::Proof,
+    zk_one_circuit::proof::Proof,
 };
 use anyhow::anyhow;
 

@@ -1,5 +1,7 @@
 //! The Longfellow ZK protocol, as applied to a single circuit.
 
+pub mod proof;
+#[cfg(feature = "prover")]
 pub mod prover;
 pub mod verifier;
 

@@ -10,6 +10,8 @@ use serde::Deserialize;
 use std::io::{self, Write};
 
 pub mod merkle;
+pub mod proof;
+#[cfg(feature = "prover")]
 pub mod prover;
 pub mod tableau;
 pub mod verifier;

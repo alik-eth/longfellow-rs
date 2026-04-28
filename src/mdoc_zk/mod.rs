@@ -2,7 +2,7 @@ use crate::{
     Codec, ParameterizedCodec,
     circuit::Circuit,
     fields::{CodecFieldElement, FieldElement, field2_128::Field2_128, fieldp256::FieldP256},
-    ligero::{LigeroParameters, merkle::Root, prover::LigeroProof, tableau::TableauLayout},
+    ligero::{LigeroParameters, merkle::Root, proof::LigeroProof, tableau::TableauLayout},
     mdoc_zk::{
         bit_plucker::BitPlucker,
         ec::{AffinePoint, fill_ecdsa_witness},
@@ -32,6 +32,7 @@ mod bit_plucker;
 mod ec;
 mod layout;
 mod mdoc;
+#[cfg(feature = "prover")]
 pub mod prover;
 mod sha256;
 pub mod verifier;
