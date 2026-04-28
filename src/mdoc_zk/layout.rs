@@ -8,7 +8,7 @@ use educe::Educe;
 
 /// Determines the layout of the signature circuit and hash circuit inputs for the mdoc_zk
 /// system.
-pub(super) struct InputLayout {
+pub(crate) struct InputLayout {
     version: CircuitVersion,
     attributes: u8,
 }
@@ -20,7 +20,7 @@ impl InputLayout {
     /// # Errors
     ///
     /// Returns an error if the number of attributes is not between one and four.
-    pub(super) fn new(version: CircuitVersion, attributes: u8) -> Result<Self, anyhow::Error> {
+    pub(crate) fn new(version: CircuitVersion, attributes: u8) -> Result<Self, anyhow::Error> {
         if attributes == 0 || attributes > 4 {
             return Err(anyhow!("unsupported number of attributes: {attributes}"));
         }
@@ -33,7 +33,7 @@ impl InputLayout {
     /// Returns the length of the statement for the signature circuit, in P-256 field elements.
     ///
     /// This includes only public inputs, including the implicit 1.
-    pub(super) fn signature_statement_length(&self) -> usize {
+    pub(crate) fn signature_statement_length(&self) -> usize {
         // Signature circuit input layout is unchanged between circuit versions 6 and 7.
         match self.version {
             CircuitVersion::V6 | CircuitVersion::V7 => {}
@@ -48,7 +48,7 @@ impl InputLayout {
     /// Returns the length of the input for the signature circuit, in P-256 field elements.
     ///
     /// This includes all public and private inputs, including the implicit 1.
-    pub(super) fn signature_input_length(&self) -> usize {
+    pub(crate) fn signature_input_length(&self) -> usize {
         // Signature circuit input layout is unchanged between circuit versions 6 and 7.
         match self.version {
             CircuitVersion::V6 | CircuitVersion::V7 => {}
@@ -66,7 +66,7 @@ impl InputLayout {
     /// # Panics
     ///
     /// Panics if the input slice is not of the length given by [`Self::signature_statement_length()`].
-    pub(super) fn split_signature_statement<'a>(
+    pub(crate) fn split_signature_statement<'a>(
         &self,
         input: &'a mut [FieldP256],
     ) -> SplitSignatureStatement<'a> {
@@ -96,7 +96,7 @@ impl InputLayout {
     /// # Panics
     ///
     /// Panics if the input slice is not of the length given by [`Self::signature_input_length()`].
-    pub(super) fn split_signature_input<'a>(
+    pub(crate) fn split_signature_input<'a>(
         &self,
         input: &'a mut [FieldP256],
     ) -> SplitSignatureInput<'a> {
@@ -129,7 +129,7 @@ impl InputLayout {
     /// Returns the length of the statement for the hash circuit, in GF(2^128) field elements.
     ///
     /// This includes only public inputs, including the implicit 1.
-    pub(super) fn hash_statement_length(&self) -> usize {
+    pub(crate) fn hash_statement_length(&self) -> usize {
         let wires_per_attribute = match self.version {
             CircuitVersion::V6 => AttributeInputV6::LENGTH,
             CircuitVersion::V7 => AttributeInputV7::LENGTH,
@@ -144,7 +144,7 @@ impl InputLayout {
     /// Returns the length of the input for the hash circuit, in GF(2^128) field elements.
     ///
     /// This includes all public and private inputs, including the implicit 1.
-    pub(super) fn hash_input_length(&self) -> usize {
+    pub(crate) fn hash_input_length(&self) -> usize {
         let sha_256_max_blocks = self.sha_256_max_blocks();
         let wires_per_attribute = match self.version {
             CircuitVersion::V6 => AttributeWitnessV6::LENGTH,
@@ -165,7 +165,7 @@ impl InputLayout {
     }
 
     /// Returns the maximum number of SHA-256 blocks allowed for the credential hash.
-    pub(super) fn sha_256_max_blocks(&self) -> usize {
+    pub(crate) fn sha_256_max_blocks(&self) -> usize {
         match self.version {
             CircuitVersion::V6 => SHA_256_CREDENTIAL_MAX_BLOCKS_V6,
             CircuitVersion::V7 => SHA_256_CREDENTIAL_MAX_BLOCKS_V7,
@@ -177,7 +177,7 @@ impl InputLayout {
     /// # Panics
     ///
     /// Panics if the input slice is not of the length given by [`Self::hash_statement_length()`].
-    pub(super) fn split_hash_statement<'a>(
+    pub(crate) fn split_hash_statement<'a>(
         &self,
         input: &'a mut [Field2_128],
     ) -> SplitHashStatement<'a> {
@@ -249,7 +249,7 @@ impl InputLayout {
     /// # Panics
     ///
     /// Panics if the input slice is not of the length given by [`Self::hash_input_length()`].
-    pub(super) fn split_hash_input<'a>(&self, input: &'a mut [Field2_128]) -> SplitHashInput<'a> {
+    pub(crate) fn split_hash_input<'a>(&self, input: &'a mut [Field2_128]) -> SplitHashInput<'a> {
         assert_eq!(input.len(), self.hash_input_length());
         // After this assertion, all subsequent `unwrap()` and `split_at_mut()` calls should not panic.
 
@@ -391,39 +391,39 @@ impl InputLayout {
 
 /// Pointers to different parts of the signature circuit's public inputs.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct SplitSignatureStatement<'a> {
-    pub(super) implicit_one: &'a mut FieldP256,
-    pub(super) issuer_public_key_x: &'a mut FieldP256,
-    pub(super) issuer_public_key_y: &'a mut FieldP256,
-    pub(super) e_session_transcript: &'a mut FieldP256,
-    pub(super) mac_tags: &'a mut [FieldP256; 3 * 2 * 128],
-    pub(super) mac_verifier_key_share: &'a mut [FieldP256; 128],
+pub(crate) struct SplitSignatureStatement<'a> {
+    pub(crate) implicit_one: &'a mut FieldP256,
+    pub(crate) issuer_public_key_x: &'a mut FieldP256,
+    pub(crate) issuer_public_key_y: &'a mut FieldP256,
+    pub(crate) e_session_transcript: &'a mut FieldP256,
+    pub(crate) mac_tags: &'a mut [FieldP256; 3 * 2 * 128],
+    pub(crate) mac_verifier_key_share: &'a mut [FieldP256; 128],
 }
 
 /// Pointers to different parts of the signature circuit's inputs.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct SplitSignatureInput<'a> {
-    pub(super) statement: SplitSignatureStatement<'a>,
-    pub(super) e_credential: &'a mut FieldP256,
-    pub(super) device_public_key_x: &'a mut FieldP256,
-    pub(super) device_public_key_y: &'a mut FieldP256,
-    pub(super) credential_ecdsa_witness: EcdsaWitness<'a>,
-    pub(super) device_ecdsa_witness: EcdsaWitness<'a>,
-    pub(super) mac_witnesses: &'a mut [FieldP256; 3 * 256 * 2 / 2],
+pub(crate) struct SplitSignatureInput<'a> {
+    pub(crate) statement: SplitSignatureStatement<'a>,
+    pub(crate) e_credential: &'a mut FieldP256,
+    pub(crate) device_public_key_x: &'a mut FieldP256,
+    pub(crate) device_public_key_y: &'a mut FieldP256,
+    pub(crate) credential_ecdsa_witness: EcdsaWitness<'a>,
+    pub(crate) device_ecdsa_witness: EcdsaWitness<'a>,
+    pub(crate) mac_witnesses: &'a mut [FieldP256; 3 * 256 * 2 / 2],
 }
 
 /// Witnesses for ECDSA verification.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct EcdsaWitness<'a> {
-    pub(super) r_x: &'a mut FieldP256,
-    pub(super) r_y: &'a mut FieldP256,
-    pub(super) r_x_inverse: &'a mut FieldP256,
-    pub(super) neg_s_inverse: &'a mut FieldP256,
-    pub(super) q_x_inverse: &'a mut FieldP256,
-    pub(super) sum_g_q: &'a mut [FieldP256; 2],
-    pub(super) sum_g_r: &'a mut [FieldP256; 2],
-    pub(super) sum_q_r: &'a mut [FieldP256; 2],
-    pub(super) sum_g_q_r: &'a mut [FieldP256; 2],
+pub(crate) struct EcdsaWitness<'a> {
+    pub(crate) r_x: &'a mut FieldP256,
+    pub(crate) r_y: &'a mut FieldP256,
+    pub(crate) r_x_inverse: &'a mut FieldP256,
+    pub(crate) neg_s_inverse: &'a mut FieldP256,
+    pub(crate) q_x_inverse: &'a mut FieldP256,
+    pub(crate) sum_g_q: &'a mut [FieldP256; 2],
+    pub(crate) sum_g_r: &'a mut [FieldP256; 2],
+    pub(crate) sum_q_r: &'a mut [FieldP256; 2],
+    pub(crate) sum_g_q_r: &'a mut [FieldP256; 2],
     msm_witnesses: &'a mut [FieldP256; 256 + 255 * 3],
 }
 
@@ -468,7 +468,7 @@ impl<'a> EcdsaWitness<'a> {
     ///
     /// Yields a tuple of the table index, and optionally the three projective coordinates of the
     /// accumulator point. The latter is not present on the last iteration.
-    pub(super) fn iter_msm(
+    pub(crate) fn iter_msm(
         &'a mut self,
     ) -> impl Iterator<Item = (&'a mut FieldP256, Option<&'a mut [FieldP256; 3]>)> {
         self.msm_witnesses.chunks_mut(4).map(|chunk| {
@@ -490,48 +490,48 @@ impl<'a> EcdsaWitness<'a> {
 
 /// Pointers to different parts of the hash circuit's public inputs.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct SplitHashStatement<'a> {
-    pub(super) implicit_one: &'a mut Field2_128,
-    pub(super) attribute_inputs: AttributeInputs<'a>,
-    pub(super) time: &'a mut [Field2_128; 20 * 8],
-    pub(super) mac_tags: &'a mut [Field2_128; 6],
-    pub(super) mac_verifier_key_share: &'a mut Field2_128,
+pub(crate) struct SplitHashStatement<'a> {
+    pub(crate) implicit_one: &'a mut Field2_128,
+    pub(crate) attribute_inputs: AttributeInputs<'a>,
+    pub(crate) time: &'a mut [Field2_128; 20 * 8],
+    pub(crate) mac_tags: &'a mut [Field2_128; 6],
+    pub(crate) mac_verifier_key_share: &'a mut Field2_128,
 }
 
 /// Pointers to different parts of the hash circuit's inputs.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct SplitHashInput<'a> {
-    pub(super) statement: SplitHashStatement<'a>,
-    pub(super) e_credential: &'a mut [Field2_128; 256],
-    pub(super) device_public_key_x: &'a mut [Field2_128; 256],
-    pub(super) device_public_key_y: &'a mut [Field2_128; 256],
-    pub(super) sha_256_block_count: &'a mut [Field2_128; 8],
-    pub(super) sha_256_input: &'a mut [Field2_128],
-    pub(super) sha_256_witness_credential: Sha256Witness<'a>,
-    pub(super) valid_from_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
-    pub(super) valid_until_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
-    pub(super) device_key_info_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
-    pub(super) value_digests_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
-    pub(super) attribute_witnesses: AttributeWitnesses<'a>,
-    pub(super) mac_prover_key_shares: &'a mut [Field2_128; 3 * 2],
+pub(crate) struct SplitHashInput<'a> {
+    pub(crate) statement: SplitHashStatement<'a>,
+    pub(crate) e_credential: &'a mut [Field2_128; 256],
+    pub(crate) device_public_key_x: &'a mut [Field2_128; 256],
+    pub(crate) device_public_key_y: &'a mut [Field2_128; 256],
+    pub(crate) sha_256_block_count: &'a mut [Field2_128; 8],
+    pub(crate) sha_256_input: &'a mut [Field2_128],
+    pub(crate) sha_256_witness_credential: Sha256Witness<'a>,
+    pub(crate) valid_from_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) valid_until_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) device_key_info_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) value_digests_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) attribute_witnesses: AttributeWitnesses<'a>,
+    pub(crate) mac_prover_key_shares: &'a mut [Field2_128; 3 * 2],
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) enum AttributeInputs<'a> {
+pub(crate) enum AttributeInputs<'a> {
     V6(AttributeInputsV6<'a>),
     V7(AttributeInputsV7<'a>),
 }
 
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct AttributeInputsV6<'a> {
-    pub(super) inputs: [Option<AttributeInputV6<'a>>; 4],
+pub(crate) struct AttributeInputsV6<'a> {
+    pub(crate) inputs: [Option<AttributeInputV6<'a>>; 4],
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct AttributeInputV6<'a> {
-    pub(super) cbor_data: &'a mut [Field2_128; ATTRIBUTE_CBOR_DATA_LENGTH_V6 * 8],
-    pub(super) cbor_length: &'a mut [Field2_128; 8],
+pub(crate) struct AttributeInputV6<'a> {
+    pub(crate) cbor_data: &'a mut [Field2_128; ATTRIBUTE_CBOR_DATA_LENGTH_V6 * 8],
+    pub(crate) cbor_length: &'a mut [Field2_128; 8],
 }
 
 impl<'a> AttributeInputV6<'a> {
@@ -543,16 +543,16 @@ impl<'a> AttributeInputV6<'a> {
 
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct AttributeInputsV7<'a> {
-    pub(super) inputs: [Option<AttributeInputV7<'a>>; 4],
+pub(crate) struct AttributeInputsV7<'a> {
+    pub(crate) inputs: [Option<AttributeInputV7<'a>>; 4],
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct AttributeInputV7<'a> {
-    pub(super) cbor_identifier: &'a mut [Field2_128; ATTRIBUTE_CBOR_IDENTIFIER_LENGTH_V7 * 8],
-    pub(super) cbor_value: &'a mut [Field2_128; ATTRIBUTE_CBOR_VALUE_LENGTH_V7 * 8],
-    pub(super) id_length: &'a mut [Field2_128; 8],
-    pub(super) value_length: &'a mut [Field2_128; 8],
+pub(crate) struct AttributeInputV7<'a> {
+    pub(crate) cbor_identifier: &'a mut [Field2_128; ATTRIBUTE_CBOR_IDENTIFIER_LENGTH_V7 * 8],
+    pub(crate) cbor_value: &'a mut [Field2_128; ATTRIBUTE_CBOR_VALUE_LENGTH_V7 * 8],
+    pub(crate) id_length: &'a mut [Field2_128; 8],
+    pub(crate) value_length: &'a mut [Field2_128; 8],
 }
 
 impl<'a> AttributeInputV7<'a> {
@@ -565,12 +565,12 @@ impl<'a> AttributeInputV7<'a> {
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct Sha256Witness<'a> {
+pub(crate) struct Sha256Witness<'a> {
     input: &'a mut [Field2_128],
 }
 
 impl<'a> Sha256Witness<'a> {
-    pub(super) fn iter_blocks(&'a mut self) -> impl Iterator<Item = Sha256BlockWitness<'a>> {
+    pub(crate) fn iter_blocks(&'a mut self) -> impl Iterator<Item = Sha256BlockWitness<'a>> {
         self.input
             .chunks_exact_mut(Sha256BlockWitness::LENGTH)
             .map(|input| {
@@ -589,15 +589,15 @@ impl<'a> Sha256Witness<'a> {
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct Sha256BlockWitness<'a> {
-    pub(super) message_schedule: &'a mut [Field2_128; 48 * 32 / 4],
-    pub(super) state_e_a: &'a mut [Field2_128; 64 * 2 * 32 / 4],
-    pub(super) intermediate_hash_value: &'a mut [Field2_128; 8 * 32 / 4],
+pub(crate) struct Sha256BlockWitness<'a> {
+    pub(crate) message_schedule: &'a mut [Field2_128; 48 * 32 / 4],
+    pub(crate) state_e_a: &'a mut [Field2_128; 64 * 2 * 32 / 4],
+    pub(crate) intermediate_hash_value: &'a mut [Field2_128; 8 * 32 / 4],
 }
 
 impl<'a> Sha256BlockWitness<'a> {
     /// Number of hash circuit input wires needed for SHA-256 verification witnesses per block.
-    pub(super) const LENGTH: usize = {
+    pub(crate) const LENGTH: usize = {
         48 * 32 / 4 // remainder of message schedule
         + 64 * 2 * 32 / 4 // state values e and a
         + 8 * 32 / 4 // intermediate hash value
@@ -606,30 +606,30 @@ impl<'a> Sha256BlockWitness<'a> {
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 #[allow(clippy::large_enum_variant)]
-pub(super) enum AttributeWitnesses<'a> {
+pub(crate) enum AttributeWitnesses<'a> {
     V6(AttributeWitnessesV6<'a>),
     V7(AttributeWitnessesV7<'a>),
 }
 
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct AttributeWitnessesV6<'a> {
-    pub(super) inputs: [Option<AttributeWitnessV6<'a>>; 4],
+pub(crate) struct AttributeWitnessesV6<'a> {
+    pub(crate) inputs: [Option<AttributeWitnessV6<'a>>; 4],
 }
 
 #[cfg_attr(test, derive(Debug, Educe))]
 #[cfg_attr(test, educe(PartialEq, Eq))]
-pub(super) struct AttributeWitnessV6<'a> {
-    pub(super) sha_256_input: &'a mut [Field2_128; 2 * 64 * 8],
-    pub(super) sha_256_witness: Sha256Witness<'a>,
-    pub(super) digest_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
-    pub(super) cbor_data_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+pub(crate) struct AttributeWitnessV6<'a> {
+    pub(crate) sha_256_input: &'a mut [Field2_128; 2 * 64 * 8],
+    pub(crate) sha_256_witness: Sha256Witness<'a>,
+    pub(crate) digest_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) cbor_data_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
     #[cfg_attr(test, educe(PartialEq(ignore)))]
-    pub(super) cbor_data_length: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) cbor_data_length: &'a mut [Field2_128; CBOR_OFFSET_BITS],
     #[cfg_attr(test, educe(PartialEq(ignore)))]
-    pub(super) unused_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) unused_offset: &'a mut [Field2_128; CBOR_OFFSET_BITS],
     #[cfg_attr(test, educe(PartialEq(ignore)))]
-    pub(super) unused_length: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) unused_length: &'a mut [Field2_128; CBOR_OFFSET_BITS],
 }
 
 impl<'a> AttributeWitnessV6<'a> {
@@ -644,22 +644,22 @@ impl<'a> AttributeWitnessV6<'a> {
 
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub(super) struct AttributeWitnessesV7<'a> {
-    pub(super) inputs: [Option<AttributeWitnessV7<'a>>; 4],
+pub(crate) struct AttributeWitnessesV7<'a> {
+    pub(crate) inputs: [Option<AttributeWitnessV7<'a>>; 4],
 }
 
 #[cfg_attr(test, derive(Debug, Educe))]
 #[cfg_attr(test, educe(PartialEq, Eq))]
-pub(super) struct AttributeWitnessV7<'a> {
-    pub(super) inner: AttributeWitnessV6<'a>,
-    pub(super) kv_offset_1: &'a mut [Field2_128; CBOR_OFFSET_BITS],
-    pub(super) kv_offset_2: &'a mut [Field2_128; CBOR_OFFSET_BITS],
-    pub(super) kv_offset_3: &'a mut [Field2_128; CBOR_OFFSET_BITS],
-    pub(super) kv_lengths: [&'a mut [Field2_128; CBOR_OFFSET_BITS]; 4],
-    pub(super) kv_order_digest_id: &'a mut [Field2_128; 2],
-    pub(super) kv_order_random: &'a mut [Field2_128; 2],
-    pub(super) kv_order_element_identifier: &'a mut [Field2_128; 2],
-    pub(super) kv_order_element_value: &'a mut [Field2_128; 2],
+pub(crate) struct AttributeWitnessV7<'a> {
+    pub(crate) inner: AttributeWitnessV6<'a>,
+    pub(crate) kv_offset_1: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) kv_offset_2: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) kv_offset_3: &'a mut [Field2_128; CBOR_OFFSET_BITS],
+    pub(crate) kv_lengths: [&'a mut [Field2_128; CBOR_OFFSET_BITS]; 4],
+    pub(crate) kv_order_digest_id: &'a mut [Field2_128; 2],
+    pub(crate) kv_order_random: &'a mut [Field2_128; 2],
+    pub(crate) kv_order_element_identifier: &'a mut [Field2_128; 2],
+    pub(crate) kv_order_element_value: &'a mut [Field2_128; 2],
 }
 
 impl<'a> AttributeWitnessV7<'a> {
@@ -683,30 +683,30 @@ fn sha_256_input_wires(max_blocks: usize) -> usize {
 /// Number of wires for all block witnesses related to the credential SHA-256 calculation.
 ///
 /// Takes the maximum number of SHA-256 blocks as an argument.
-pub(super) fn sha_256_witness_wires(max_blocks: usize) -> usize {
+pub(crate) fn sha_256_witness_wires(max_blocks: usize) -> usize {
     max_blocks * Sha256BlockWitness::LENGTH
 }
 
 /// Maximum allowed number of SHA-256 blocks during verification of the issuer's signature over the
 /// credential. (circuit version 6)
-pub(super) const SHA_256_CREDENTIAL_MAX_BLOCKS_V6: usize = 35;
+pub(crate) const SHA_256_CREDENTIAL_MAX_BLOCKS_V6: usize = 35;
 /// Maximum allowed number of SHA-256 blocks during verification of the issuer's signature over the
 /// credential. (circuit version 7)
-pub(super) const SHA_256_CREDENTIAL_MAX_BLOCKS_V7: usize = 40;
+pub(crate) const SHA_256_CREDENTIAL_MAX_BLOCKS_V7: usize = 40;
 
 /// Length of the constant prefix excluded from the SHA-256 padded input witness.
 ///
 /// This includes the first few fields of the encoded `Sig_structure` CBOR structure.
-pub(super) const SHA_256_CREDENTIAL_KNOWN_PREFIX_BYTES: usize = 18;
+pub(crate) const SHA_256_CREDENTIAL_KNOWN_PREFIX_BYTES: usize = 18;
 
 /// Number of bits and wires for each CBOR offset.
 const CBOR_OFFSET_BITS: usize = 12;
 /// Number of bytes allocated for attribute identifier and value.
-pub(super) const ATTRIBUTE_CBOR_DATA_LENGTH_V6: usize = 96;
+pub(crate) const ATTRIBUTE_CBOR_DATA_LENGTH_V6: usize = 96;
 /// Number of bytes allocated for attribute identifier.
-pub(super) const ATTRIBUTE_CBOR_IDENTIFIER_LENGTH_V7: usize = 32;
+pub(crate) const ATTRIBUTE_CBOR_IDENTIFIER_LENGTH_V7: usize = 32;
 /// Number of bytes allocated for attribute value.
-pub(super) const ATTRIBUTE_CBOR_VALUE_LENGTH_V7: usize = 64;
+pub(crate) const ATTRIBUTE_CBOR_VALUE_LENGTH_V7: usize = 64;
 
 #[cfg(test)]
 mod tests {

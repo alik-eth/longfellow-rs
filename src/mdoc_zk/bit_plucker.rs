@@ -4,19 +4,19 @@ use crate::fields::{FieldElement, field2_128::Field2_128, fieldp256::FieldP256};
 ///
 /// This allows multiple bits to be packed into one witness input, and then unpacked inside the
 /// circuit through interpolation.
-pub(super) struct BitPlucker<const BITS: u8, FE: FieldElement> {
+pub(crate) struct BitPlucker<const BITS: u8, FE: FieldElement> {
     offset: FE,
 }
 
 impl BitPlucker<4, Field2_128> {
     /// Construct a bit plucker for a given number of bits.
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let offset = Field2_128::inject((1u16 << 4) - 1);
         Self { offset }
     }
 
     /// Encode multiple bits into one field element.
-    pub(super) fn encode(&self, value: u16) -> Field2_128 {
+    pub(crate) fn encode(&self, value: u16) -> Field2_128 {
         // Note that we need to inject using BITS + 1 bits here. We can't use a generic parameter to
         // compute `BITS + 1` in a const context, so we only instantiate this implementation for the
         // one concrete parameter choice we need.
@@ -24,7 +24,7 @@ impl BitPlucker<4, Field2_128> {
     }
 
     /// Encode multiple words into multiple field elements.
-    pub(super) fn encode_u32_array(&self, words: &[u32], out: &mut [Field2_128]) {
+    pub(crate) fn encode_u32_array(&self, words: &[u32], out: &mut [Field2_128]) {
         assert_eq!(words.len() * 32, out.len() * 4);
         let mask = u16::MAX >> (u16::BITS - 4);
         for (word, out_chunk) in words.iter().zip(out.chunks_exact_mut(32 / 4)) {
@@ -39,13 +39,13 @@ impl BitPlucker<4, Field2_128> {
 
 impl<const BITS: u8> BitPlucker<BITS, FieldP256> {
     /// Construct a bit plucker for a given number of bits.
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let offset = FieldP256::from_u128((1u128 << BITS) - 1);
         Self { offset }
     }
 
     /// Encode multiple bits into one field element.
-    pub(super) fn encode(&self, value: u16) -> FieldP256 {
+    pub(crate) fn encode(&self, value: u16) -> FieldP256 {
         FieldP256::from_u128(2 * u128::from(value)) - self.offset
     }
 
@@ -54,7 +54,7 @@ impl<const BITS: u8> BitPlucker<BITS, FieldP256> {
     /// # Panics
     ///
     /// Panics if BITS is not 1, 2, 4, or 8.
-    pub(super) fn encode_byte_array(&self, bytes: &[u8], out: &mut [FieldP256]) {
+    pub(crate) fn encode_byte_array(&self, bytes: &[u8], out: &mut [FieldP256]) {
         assert!(BITS <= 8);
         assert_eq!(8 % BITS, 0);
         assert_eq!(bytes.len() * 8, out.len() * BITS as usize);

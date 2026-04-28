@@ -15,7 +15,7 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 /// An elliptic curve point, represented with affine coordinates.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct AffinePoint {
+pub(crate) struct AffinePoint {
     /// If this is `Some`, it contains the coordinates of the point. If this is `None`, this point
     /// is the point at infinity.
     coords: CtOption<[FieldP256; 2]>,
@@ -23,14 +23,14 @@ pub(super) struct AffinePoint {
 
 impl AffinePoint {
     /// Constructs a point from its coordinates.
-    pub(super) fn new(x: FieldP256, y: FieldP256) -> Self {
+    pub(crate) fn new(x: FieldP256, y: FieldP256) -> Self {
         Self {
             coords: CtOption::new([x, y], Choice::from(1)),
         }
     }
 
     /// Constructs the point at infinity.
-    pub(super) fn infinity() -> Self {
+    pub(crate) fn infinity() -> Self {
         Self {
             coords: CtOption::new(Default::default(), Choice::from(0)),
         }
@@ -40,7 +40,7 @@ impl AffinePoint {
     ///
     /// Note that this is not constant time with respect to the discriminant for the point
     /// at infinity.
-    pub(super) fn coordinates(&self) -> Option<[FieldP256; 2]> {
+    pub(crate) fn coordinates(&self) -> Option<[FieldP256; 2]> {
         self.coords.into()
     }
 
@@ -49,7 +49,7 @@ impl AffinePoint {
     /// Returns `None` if the encoding represents the point at infinity.
     ///
     /// See <https://www.secg.org/sec1-v2.pdf#page=17>.
-    pub(super) fn decode(bytes: &[u8]) -> Result<AffinePoint, anyhow::Error> {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<AffinePoint, anyhow::Error> {
         if bytes == [0] {
             // Point at infinity.
             Ok(Self::infinity())
@@ -123,10 +123,10 @@ impl Eq for AffinePoint {}
 
 /// An elliptic curve point, represented with projective coordinates.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct ProjectivePoint {
-    pub(super) x: FieldP256,
-    pub(super) y: FieldP256,
-    pub(super) z: FieldP256,
+pub(crate) struct ProjectivePoint {
+    pub(crate) x: FieldP256,
+    pub(crate) y: FieldP256,
+    pub(crate) z: FieldP256,
 }
 
 impl From<AffinePoint> for ProjectivePoint {
@@ -290,7 +290,7 @@ impl ProjectivePoint {
     /// The identity element of the projective point addition operation.
     ///
     /// This represents the point at infinity in the elliptic curve.
-    pub(super) const IDENTITY: Self = Self {
+    pub(crate) const IDENTITY: Self = Self {
         x: FieldP256::ZERO,
         y: FieldP256::ONE,
         z: FieldP256::ZERO,
@@ -300,7 +300,7 @@ impl ProjectivePoint {
     ///
     /// See https://eprint.iacr.org/2015/1060, Algorithm 6, "Exception-free point doubling for prime
     /// order short Weierstrass curves E/F_q: y^2 = x^3 + ax + b with a = -3."
-    pub(super) fn double(self) -> Self {
+    pub(crate) fn double(self) -> Self {
         let Self { x, y, z } = self;
 
         let t0 = x * x; // 1
@@ -346,7 +346,7 @@ impl ProjectivePoint {
     }
 
     /// Perform an elliptic curve point scalar multiplication.
-    pub(super) fn scalar_mult(self, scalar: impl Scalar) -> Self {
+    pub(crate) fn scalar_mult(self, scalar: impl Scalar) -> Self {
         let mut accumulator = Self::IDENTITY;
         for bit in scalar.bits() {
             let double = accumulator.double();
@@ -368,7 +368,7 @@ impl ConditionallySelectable for ProjectivePoint {
 }
 
 /// Values that can be used as a scalar in an elliptic curve point scalar multiplication.
-pub(super) trait Scalar {
+pub(crate) trait Scalar {
     /// Returns the bits of the scalar, starting with the most significant bit.
     fn bits(&self) -> impl Iterator<Item = Choice>;
 }
@@ -451,16 +451,16 @@ const P256_G: [FieldP256; 2] = {
 
 /// An ECDSA signature.
 #[derive(Clone, Copy)]
-pub(super) struct Signature {
-    pub(super) r: FieldP256Scalar,
-    pub(super) s: FieldP256Scalar,
+pub(crate) struct Signature {
+    pub(crate) r: FieldP256Scalar,
+    pub(crate) s: FieldP256Scalar,
 }
 
 impl Signature {
     /// Deserialize a P-256 ECDSA signature from a byte string.
     ///
     /// See [RFC 9053, section 2.1](https://www.rfc-editor.org/rfc/rfc9053.html#section-2.1).
-    pub(super) fn decode(input: &[u8]) -> Result<Self, anyhow::Error> {
+    pub(crate) fn decode(input: &[u8]) -> Result<Self, anyhow::Error> {
         if input.len() != 64 {
             return Err(anyhow!("signature length is incorrect"));
         }
@@ -485,7 +485,7 @@ impl Signature {
 }
 
 #[cfg(feature = "prover")]
-pub(super) fn fill_ecdsa_witness<'a, 'b: 'a>(
+pub(crate) fn fill_ecdsa_witness<'a, 'b: 'a>(
     witness: &'b mut EcdsaWitness<'a>,
     public_key: AffinePoint,
     signature: Signature,

@@ -36,9 +36,9 @@ use anyhow::{Context, anyhow};
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
-mod bit_plucker;
-mod ec;
-mod layout;
+pub(crate) mod bit_plucker;
+pub(crate) mod ec;
+pub(crate) mod layout;
 #[cfg(feature = "prover")]
 mod mdoc;
 #[cfg(feature = "prover")]
