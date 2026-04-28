@@ -48,6 +48,8 @@ pub mod public_inputs;
 #[cfg(feature = "prover")]
 pub(crate) mod sha256_witness;
 #[cfg(feature = "prover")]
+pub mod stateless;
+#[cfg(feature = "prover")]
 pub(crate) mod trust_anchors;
 pub mod verifier;
 pub mod witness;
@@ -59,5 +61,7 @@ pub use parser::{parse_public_blob, parse_witness_blob};
 #[cfg(feature = "prover")]
 pub use prover::{P7sV12PublicOutputs, P7sZkProver};
 pub use public_inputs::ParsedPublic;
+#[cfg(feature = "prover")]
+pub use stateless::{prove_v12, verify_v12};
 pub use verifier::P7sZkVerifier;
 pub use witness::ParsedWitness;

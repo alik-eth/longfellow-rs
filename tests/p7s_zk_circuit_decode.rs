@@ -1,7 +1,7 @@
 //! Integration test for Task #95 work-item 0: round-trip decode of the
 //! committed p7s circuit fixture.
 //!
-//! The fixture `tests/fixtures/p7s_zk/p7s_circuit_v12.bin.zst` is
+//! The fixture `circuits/p7s_circuit_v12.bin.zst` is
 //! produced by the `dump-p7s-circuits` binary in `crates/longfellow-sys`
 //! after the C++ vendor's `p7s_dump_circuits` extern-C entry runs
 //! `CircuitRep<F>::to_bytes` on the static `get_hash_circuit()` /
@@ -24,11 +24,13 @@ use longfellow::{
     p7s_zk::layout::{HASH_PUB_TOTAL, SIG_PUB_TOTAL},
 };
 
-const COMPRESSED_FIXTURE: &[u8] =
-    include_bytes!("fixtures/p7s_zk/p7s_circuit_v12.bin.zst");
+// Public crate asset (sub-PR `circuit_data` in #78). Same compressed bytes
+// the runtime stateless wrappers use, exercised here as a structural-decode
+// regression guard.
+use longfellow::circuit_data::P7S_CIRCUIT_V12_ZST;
 
 fn load_decompressed_circuit_bytes() -> Vec<u8> {
-    zstd::decode_all(COMPRESSED_FIXTURE).expect("zstd decode of p7s circuit fixture")
+    zstd::decode_all(P7S_CIRCUIT_V12_ZST).expect("zstd decode of p7s circuit fixture")
 }
 
 #[test]

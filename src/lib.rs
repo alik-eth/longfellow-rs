@@ -10,6 +10,7 @@ use core::fmt::{self, Display};
 use crypto_common::{generic_array::GenericArray, typenum::U32};
 
 pub mod circuit;
+pub mod circuit_data;
 #[cfg(feature = "mobile")]
 pub mod ffi_api;
 pub mod fields;

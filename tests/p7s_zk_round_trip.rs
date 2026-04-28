@@ -25,15 +25,14 @@ use longfellow::{
     },
 };
 
-const COMPRESSED_CIRCUIT: &[u8] =
-    include_bytes!("fixtures/p7s_zk/p7s_circuit_v12.bin.zst");
+use longfellow::circuit_data::P7S_CIRCUIT_V12_ZST;
 const WITNESS_BLOB: &[u8] =
     include_bytes!("fixtures/p7s/blobs/testanchor_a_v12_witness.bin");
 const PUBLIC_BLOB: &[u8] =
     include_bytes!("fixtures/p7s/blobs/testanchor_a_v12_public.bin");
 
 fn load_circuit_bytes() -> Vec<u8> {
-    zstd::decode_all(COMPRESSED_CIRCUIT).expect("zstd decode of p7s circuit fixture")
+    zstd::decode_all(P7S_CIRCUIT_V12_ZST).expect("zstd decode of p7s circuit fixture")
 }
 
 /// Construct prover + verifier from the same `circuit_bytes` and Rust-internal
@@ -124,7 +123,7 @@ fn p7s_v12_round_trip_fixture_files_exist() {
     // Cheap sanity that fixture pieces are present and non-empty.
     assert!(!WITNESS_BLOB.is_empty(), "witness fixture present");
     assert!(!PUBLIC_BLOB.is_empty(), "public fixture present");
-    assert!(!COMPRESSED_CIRCUIT.is_empty(), "circuit fixture present");
+    assert!(!P7S_CIRCUIT_V12_ZST.is_empty(), "circuit fixture present");
     let parsed = parse_public_blob(PUBLIC_BLOB).expect("public blob parses");
     assert_eq!(parsed.trust_anchor_index, 0, "TestAnchorA index = 0");
 }
