@@ -5,7 +5,7 @@ use crate::{
     ligero::verifier::LigeroVerifier,
     mdoc_zk::{
         CircuitStatements, CircuitVersion, MdocZkProof, ProofContext, PublicAttribute,
-        prover::common_initialization,
+        common_initialization,
     },
     sumcheck::{SumcheckProtocol, initialize_transcript},
     transcript::{Transcript, TranscriptMode},

@@ -878,6 +878,43 @@ const LIGERO_NREQ_V6: usize = 128;
 /// Number of columns requested to be opened during proof verification. (circuit version 7)
 const LIGERO_NREQ_V7: usize = 132;
 
+/// Common initialization used by both the prover and verifier constructors.
+#[allow(clippy::type_complexity)]
+pub(super) fn common_initialization(
+    circuit: &[u8],
+    circuit_version: CircuitVersion,
+    num_attributes: usize,
+) -> Result<
+    (
+        Circuit<FieldP256>,
+        LigeroParameters,
+        Circuit<Field2_128>,
+        LigeroParameters,
+    ),
+    anyhow::Error,
+> {
+    if !(1..=4).contains(&num_attributes) {
+        return Err(anyhow!("unsupported number of attributes"));
+    }
+
+    let mut cursor = Cursor::new(circuit);
+    let signature_circuit = Circuit::decode(&mut cursor)?;
+    let hash_circuit = Circuit::decode(&mut cursor)?;
+    if cursor.position() as usize != circuit.len() {
+        return Err(anyhow!("extra data left over after decoding circuits"));
+    }
+
+    let hash_ligero_parameters = hash_ligero_parameters(circuit_version, num_attributes);
+    let signature_ligero_parameters = signature_ligero_parameters(circuit_version);
+
+    Ok((
+        signature_circuit,
+        signature_ligero_parameters,
+        hash_circuit,
+        hash_ligero_parameters,
+    ))
+}
+
 /// Hardcoded Ligero parameters for the signature circuit.
 fn signature_ligero_parameters(circuit_version: CircuitVersion) -> LigeroParameters {
     let block_enc = match circuit_version {
