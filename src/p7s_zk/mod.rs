@@ -30,6 +30,7 @@
 //!     `fill_hash_public_inputs` / `push_*` mirrors).
 
 pub mod layout;
+pub mod params;
 pub mod parser;
 #[cfg(feature = "prover")]
 pub mod prover;
@@ -37,6 +38,7 @@ pub mod public_inputs;
 pub mod verifier;
 pub mod witness;
 
+pub use params::{P7S_NREQ, P7S_RATE_INV, default_ligero_params_for_circuit};
 pub use parser::{parse_public_blob, parse_witness_blob};
 #[cfg(feature = "prover")]
 pub use prover::P7sZkProver;

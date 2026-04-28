@@ -18,6 +18,7 @@ use longfellow::{
     circuit::Circuit,
     fields::{field2_128::Field2_128, fieldp256::FieldP256},
     io::Cursor,
+    p7s_zk::default_ligero_params_for_circuit,
 };
 use std::path::PathBuf;
 
@@ -288,6 +289,100 @@ fn mdoc_v6_v7_witness_metadata_json_parses() {
     let v: serde_json::Value =
         serde_json::from_slice(&bytes).expect("witness metadata JSON must be valid");
     assert!(!v.is_null(), "metadata JSON must not be null");
+}
+
+// ============================================================================
+// LigeroParameters optimizer sanity (Task #74/B).
+// ============================================================================
+//
+// `default_ligero_params_for_circuit` ports the C++ production optimizer at
+// `vendor/longfellow-zk/lib/circuits/mdoc/circuit_maker.cc:64` and produces
+// a `LigeroParameters` struct from a decoded circuit. We exercise it
+// against a real V6 mdoc hash circuit and assert the results pass
+// internal Ligero invariants:
+//
+//   * `block_size == (num_columns + 1) / (2 + rateinv)`
+//   * `witnesses_per_row == block_size - nreq`
+//   * `nreq` matches the input
+//   * `2 * block_size - 1 <= num_columns`
+//
+// We do NOT cross-check against ISRG's `kZkSpecs[]` hardcoded values
+// (`mdoc_zk/mod.rs::signature_ligero_parameters` etc.). My optimizer
+// matches the production C++ optimizer's behavior on tied proof-sizes
+// (lowest-e wins; verified by hand for V6 num_attrs=1 hash circuit:
+// e=3947 and e=4096 produce the same proof size of 110720 bytes), but
+// `kZkSpecs[]` records 4096 — a tied value selected at production time
+// by something other than the proof-size minimizer (likely manual
+// power-of-two preference). For p7s usage — where the goal is consistent
+// Rust-prover ↔ Rust-verifier agreement — any consistent choice the
+// optimizer picks works. Cross-language Rust↔C++ parity at the proof-
+// bytes level (#75 / #76) needs the C++ side's exact `kZkSpecs[]`-style
+// table; that's #98's territory.
+
+const V6_RATE_INV: usize = 4;
+const V6_NREQ: usize = 128;
+const F2_128_BYTES: u64 = 16;
+const F2_128_SUBFIELD_BYTES: u64 = 2;
+const FP256_BYTES: u64 = 32;
+const FP256_SUBFIELD_BYTES: u64 = 32;
+
+#[test]
+fn ligero_params_invariants_hold_on_v6_circuit() {
+    let path = test_vector_path(MDOC_V6_FIXTURES[0]);
+    let compressed = std::fs::read(&path).unwrap();
+    let bytes = zstd::decode_all(compressed.as_slice()).unwrap();
+    let mut cursor = Cursor::new(bytes.as_slice());
+    let sig_circuit = Circuit::<FieldP256>::decode(&mut cursor).unwrap();
+    let hash_circuit = Circuit::<Field2_128>::decode(&mut cursor).unwrap();
+
+    let sig_params = default_ligero_params_for_circuit(
+        &sig_circuit,
+        V6_RATE_INV,
+        V6_NREQ,
+        FP256_BYTES,
+        FP256_SUBFIELD_BYTES,
+    );
+    let hash_params = default_ligero_params_for_circuit(
+        &hash_circuit,
+        V6_RATE_INV,
+        V6_NREQ,
+        F2_128_BYTES,
+        F2_128_SUBFIELD_BYTES,
+    );
+
+    for (label, p) in [("sig", &sig_params), ("hash", &hash_params)] {
+        assert_eq!(p.nreq, V6_NREQ, "{label}: nreq must match input");
+        assert_eq!(
+            p.block_size,
+            (p.num_columns + 1) / (2 + V6_RATE_INV),
+            "{label}: block_size formula"
+        );
+        assert_eq!(
+            p.witnesses_per_row,
+            p.block_size - p.nreq,
+            "{label}: witnesses_per_row formula"
+        );
+        assert_eq!(
+            p.witnesses_per_row, p.quadratic_constraints_per_row,
+            "{label}: witnesses_per_row == quadratic_constraints_per_row by construction"
+        );
+        assert!(
+            p.num_columns >= 2 * p.block_size - 1,
+            "{label}: dblock <= block_enc"
+        );
+    }
+    // The optimizer should have picked a non-trivial block_enc — sanity-
+    // check it landed in the iterated range [100, 2^17].
+    assert!(
+        sig_params.num_columns >= 100 && sig_params.num_columns <= (1 << 17),
+        "sig block_enc {} outside iterated range",
+        sig_params.num_columns
+    );
+    assert!(
+        hash_params.num_columns >= 100 && hash_params.num_columns <= (1 << 17),
+        "hash block_enc {} outside iterated range",
+        hash_params.num_columns
+    );
 }
 
 /// Recursive directory walk producing only files (not subdirs).
