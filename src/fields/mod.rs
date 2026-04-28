@@ -2,20 +2,19 @@
 use crate::{
     Codec,
     fields::{field2_128::Field2_128, fieldp128::FieldP128, fieldp256::FieldP256},
+    io::{Cursor, Write},
 };
 use anyhow::{Context, anyhow};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use core::{
+    fmt::Debug,
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 use num_bigint::BigUint;
 use num_integer::Integer;
 #[cfg(feature = "prover")]
 use rand::RngCore;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
-use std::{
-    fmt::Debug,
-    io::{Cursor, Write},
-    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
-};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 /// An element of a finite field.
@@ -352,17 +351,13 @@ impl TryFrom<u8> for FieldId {
 
 impl Codec for FieldId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        let value = bytes
-            .read_u24::<LittleEndian>()
-            .context("failed to read u24")?;
+        let value = crate::io::read_u24_le(bytes).context("failed to read u24")?;
         let as_u8: u8 = value.try_into().context("decoded value too big for u8")?;
         Self::try_from(as_u8)
     }
 
     fn encode<W: Write>(&self, bytes: &mut W) -> Result<(), anyhow::Error> {
-        bytes
-            .write_u24::<LittleEndian>(*self as u32)
-            .context("failed to write u24")
+        crate::io::write_u24_le(bytes, *self as u32).context("failed to write u24")
     }
 }
 

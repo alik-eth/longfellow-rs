@@ -1,17 +1,11 @@
-// no_std mode activation (`#![cfg_attr(not(feature = "std"), no_std)]`) and the
-// 27-file `std::*` → `alloc::*` / `core::*` cascade are deferred to follow-up
-// task #94 (1.2b2). This 1.2b1 commit only lays the scaffolding: the
-// `crate::io` shim, an unconditional `extern crate alloc` so the no_std arm of
-// the shim resolves, and a couple of core::* substitutions in this file. It
-// keeps the host `verifier` build green without flipping the actual no_std bit.
-
 extern crate alloc;
 
+use crate::io::{Cursor, Read, Write, read_u24_le, write_u24_le};
+use alloc::vec::Vec;
 use anyhow::{Context, anyhow};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{ByteOrder, LittleEndian};
 use core::fmt::{self, Display};
 use crypto_common::{generic_array::GenericArray, typenum::U32};
-use std::io::{Cursor, Write};
 
 pub mod circuit;
 #[cfg(feature = "mobile")]
@@ -64,11 +58,7 @@ impl TryFrom<usize> for Size {
 
 impl Codec for Size {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        Ok(Self(
-            bytes
-                .read_u24::<LittleEndian>()
-                .context("failed to read u24")?,
-        ))
+        Ok(Self(read_u24_le(bytes).context("failed to read u24")?))
     }
 
     fn encode<W: Write>(&self, bytes: &mut W) -> Result<(), anyhow::Error> {
@@ -78,9 +68,7 @@ impl Codec for Size {
                 self.0
             ));
         }
-        bytes
-            .write_u24::<LittleEndian>(self.0)
-            .context("failed to write u24")
+        write_u24_le(bytes, self.0).context("failed to write u24")
     }
 }
 
@@ -220,39 +208,41 @@ pub trait Codec: Sized + PartialEq + Eq + core::fmt::Debug {
 
 impl Codec for u8 {
     fn decode(cursor: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        cursor.read_u8().context("failed to read u8")
+        let mut buf = [0u8; 1];
+        cursor.read_exact(&mut buf).context("failed to read u8")?;
+        Ok(buf[0])
     }
 
     fn encode<W: Write>(&self, bytes: &mut W) -> Result<(), anyhow::Error> {
-        bytes.write_u8(*self).context("failed to write u8")
+        bytes.write_all(&[*self]).context("failed to write u8")
     }
 }
 
 impl Codec for u16 {
     fn decode(cursor: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        cursor
-            .read_u16::<LittleEndian>()
-            .context("failed to read u16")
+        let mut buf = [0u8; 2];
+        cursor.read_exact(&mut buf).context("failed to read u16")?;
+        Ok(LittleEndian::read_u16(&buf))
     }
 
     fn encode<W: Write>(&self, bytes: &mut W) -> Result<(), anyhow::Error> {
-        bytes
-            .write_u16::<LittleEndian>(*self)
-            .context("failed to write u16")
+        let mut buf = [0u8; 2];
+        LittleEndian::write_u16(&mut buf, *self);
+        bytes.write_all(&buf).context("failed to write u16")
     }
 }
 
 impl Codec for u32 {
     fn decode(cursor: &mut Cursor<&[u8]>) -> Result<Self, anyhow::Error> {
-        cursor
-            .read_u32::<LittleEndian>()
-            .context("failed to read u32")
+        let mut buf = [0u8; 4];
+        cursor.read_exact(&mut buf).context("failed to read u32")?;
+        Ok(LittleEndian::read_u32(&buf))
     }
 
     fn encode<W: Write>(&self, bytes: &mut W) -> Result<(), anyhow::Error> {
-        bytes
-            .write_u32::<LittleEndian>(*self)
-            .context("failed to write u32")
+        let mut buf = [0u8; 4];
+        LittleEndian::write_u32(&mut buf, *self);
+        bytes.write_all(&buf).context("failed to write u32")
     }
 }
 

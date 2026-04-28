@@ -8,7 +8,7 @@ use aes::{
     Aes256,
     cipher::{BlockEncrypt, KeyInit},
 };
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use crypto_common::{BlockSizeUser, generic_array::GenericArray};
 use sha2::{Digest, Sha256};
 use std::{cmp::min, fmt::Debug};
@@ -337,7 +337,8 @@ pub struct FiatShamirPseudoRandomFunction {
 impl FiatShamirPseudoRandomFunction {
     /// Initialize the FSPRF with the provided key, which must be the correct length for AES256.
     pub fn new(seed: &Sha256Digest) -> Result<Self, anyhow::Error> {
-        let cipher = Aes256::new_from_slice(&seed.0).context("bad key length")?;
+        let cipher =
+            Aes256::new_from_slice(&seed.0).map_err(|_| anyhow!("bad AES-256 key length"))?;
 
         Ok(Self {
             cipher,

@@ -1,24 +1,33 @@
 //! Minimal `io` shim used in place of `std::io` so the verifier path can build under
 //! `no_std + alloc`.
 //!
-//! When the `std` feature is enabled, this module re-exports `std::io::{Cursor, Read, Write,
-//! Error, ErrorKind}` directly so existing call sites and `byteorder::{ReadBytesExt,
-//! WriteBytesExt}` continue to work unchanged.
-//!
-//! When `std` is disabled, this module provides drop-in equivalents:
-//! - `Cursor<&[u8]>` — a slice-backed cursor mirroring the relevant `std::io::Cursor` surface
-//!   (`new`, `position`, `set_position`).
-//! - `Read` / `Write` — minimal traits matching the std signatures we use, plus blanket impls
-//!   that let `Cursor<&[u8]>` `Read` and `Vec<u8>` `Write`.
-//! - `Error` / `ErrorKind` — anyhow-friendly error types.
-//!
-//! The custom `Read`/`Write` are deliberately compatible with `byteorder`'s extension traits
-//! when the `byteorder/std` feature is enabled. With `byteorder` in no-std mode, callers reach
-//! for the `LittleEndian::read_*` / `write_*` slice helpers instead, which `lib.rs` already
-//! does for the `Codec` impls.
+//! Under both `std` and `no_std` the public surface is the same — `Cursor`, `Read`, `Write`,
+//! `Error`, `ErrorKind` — but in `no_std` mode they are local types defined here. The
+//! Codec/byteorder rewrite in `lib.rs` calls `byteorder::LittleEndian::{read,write}_*` directly
+//! against slices, so `byteorder`'s std-only `ReadBytesExt`/`WriteBytesExt` extension traits are
+//! never reached. `read_u24`/`write_u24` helpers are added to the local `Cursor`/`Write` because
+//! `Size` (the libzk 24-bit length tag) is the only u24 user.
 
 #[cfg(feature = "std")]
-pub use std::io::{Cursor, Error, ErrorKind, Read, Write};
+mod std_io {
+    pub use std::io::{Cursor, Error, ErrorKind, Read, Write};
+
+    /// Read a little-endian u24 from a `Cursor` and advance by 3 bytes.
+    pub fn read_u24_le<T: AsRef<[u8]>>(cursor: &mut Cursor<T>) -> Result<u32, Error> {
+        let mut buf = [0u8; 3];
+        Read::read_exact(cursor, &mut buf)?;
+        Ok(u32::from(buf[0]) | (u32::from(buf[1]) << 8) | (u32::from(buf[2]) << 16))
+    }
+
+    /// Write a little-endian u24 (low 24 bits of `value`) to a `Write`.
+    pub fn write_u24_le<W: Write + ?Sized>(writer: &mut W, value: u32) -> Result<(), Error> {
+        let buf = [value as u8, (value >> 8) as u8, (value >> 16) as u8];
+        writer.write_all(&buf)
+    }
+}
+
+#[cfg(feature = "std")]
+pub use std_io::{Cursor, Error, ErrorKind, Read, Write, read_u24_le, write_u24_le};
 
 #[cfg(not(feature = "std"))]
 mod no_std_io {
@@ -55,6 +64,8 @@ mod no_std_io {
         }
     }
 
+    impl core::error::Error for Error {}
+
     /// Minimal `std::io::Read` shim.
     pub trait Read {
         fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Error>;
@@ -78,6 +89,20 @@ mod no_std_io {
     impl<W: Write + ?Sized> Write for &mut W {
         fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
             (**self).write_all(buf)
+        }
+    }
+
+    /// `Write` impl for `&mut [u8]` mirroring `std::io::Write`'s blanket impl: writes consume the
+    /// front of the slice in place.
+    impl Write for &mut [u8] {
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
+            if buf.len() > self.len() {
+                return Err(Error::new(ErrorKind::WriteZero, "slice too small"));
+            }
+            let (head, tail) = core::mem::take(self).split_at_mut(buf.len());
+            head.copy_from_slice(buf);
+            *self = tail;
+            Ok(())
         }
     }
 
@@ -120,7 +145,20 @@ mod no_std_io {
             Ok(())
         }
     }
+
+    /// Read a little-endian u24 from a `Cursor` and advance by 3 bytes.
+    pub fn read_u24_le<T: AsRef<[u8]>>(cursor: &mut Cursor<T>) -> Result<u32, Error> {
+        let mut buf = [0u8; 3];
+        cursor.read_exact(&mut buf)?;
+        Ok(u32::from(buf[0]) | (u32::from(buf[1]) << 8) | (u32::from(buf[2]) << 16))
+    }
+
+    /// Write a little-endian u24 (low 24 bits of `value`) to a `Write`.
+    pub fn write_u24_le<W: Write + ?Sized>(writer: &mut W, value: u32) -> Result<(), Error> {
+        let buf = [value as u8, (value >> 8) as u8, (value >> 16) as u8];
+        writer.write_all(&buf)
+    }
 }
 
 #[cfg(not(feature = "std"))]
-pub use no_std_io::{Cursor, Error, ErrorKind, Read, Write};
+pub use no_std_io::{Cursor, Error, ErrorKind, Read, Write, read_u24_le, write_u24_le};

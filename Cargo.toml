@@ -14,25 +14,24 @@ license = "MPL-2.0"
 [features]
 default = ["prover", "verifier", "std"]
 verifier = []
-prover = ["dep:rand", "dep:getrandom", "dep:zstd"]
-std = []
+prover = ["dep:rand", "dep:getrandom", "dep:zstd", "dep:ciborium", "dep:ciborium-ll", "dep:x509-cert", "x509-cert/hazmat"]
+std = ["x509-cert?/std"]
 wasm = ["dep:wasm-bindgen"]
 mobile = ["dep:uniffi"]
 
 [dependencies]
-# Deps default-feature-off where the upstream offers a no_std-friendly subset of
-# what we use, so the verifier-only build under follow-up task #94 (1.2b2) can
-# target riscv32im. `std` opt-ins for the host build are layered back on via
-# the workspace `std` feature (see [features] above). Deps that genuinely need
-# their default features for our usage (e.g. `anyhow` formatter helpers) stay
-# at defaults; switching them is part of the #94 dep-audit.
-aes = "0.8.4"  # `default-features = false` deferred to #94 — strips `InvalidLength: std::error::Error` that `anyhow::Context` needs
-anyhow = "1"
-byteorder = "1.5.0"  # `default-features = false` deferred to #94 — flipping it strips ReadBytesExt/WriteBytesExt which the Codec trait still uses
-ciborium = "0.2.2"
-ciborium-ll = "0.2.2"
-crypto-common = { version = "0.1.6", features = ["std"] }  # explicit `std` because flipping sha2/aes defaults dropped it from feature-unification, and `anyhow::Context` needs `InvalidLength: std::error::Error`
-educe = { version = "0.6.0", features = ["Debug", "Clone", "Copy", "Hash", "Default"] }  # `default-features = false` deferred to #94 — drops `PartialEq` derive used by SparseSumcheckArray
+# Verifier-path deps stay no_std-friendly (`default-features = false` where
+# applicable) so the SP1 / `riscv32im-unknown-none-elf` build stays green under
+# `--features verifier --no-default-features`. CBOR/X.509 parsing live in the
+# prover-only `mdoc/` and `p7s/` parsers, so `ciborium`/`ciborium-ll`/`x509-cert`
+# are gated through the `prover` feature.
+aes = { version = "0.8.4", default-features = false }
+anyhow = { version = "1", default-features = false }
+byteorder = { version = "1.5.0", default-features = false }
+ciborium = { version = "0.2.2", optional = true }
+ciborium-ll = { version = "0.2.2", optional = true }
+crypto-common = { version = "0.1.6", default-features = false }
+educe = { version = "0.6.0", default-features = false, features = ["Debug", "Clone", "Copy", "Hash", "Default", "PartialEq"] }
 getrandom = { version = "0.3.3", optional = true, features = ["wasm_js"] }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 num-bigint = { version = "0.4.6", default-features = false }
@@ -44,7 +43,7 @@ static_assertions = "1.1.0"
 subtle = { version = "2.6.1", default-features = false, features = ["const-generics", "i128"] }
 uniffi = { version = "0.31.0", optional = true, features = ["cli"] }
 wasm-bindgen = { version = "0.2.106", optional = true }
-x509-cert = { version = "0.2.5", default-features = false, features = ["hazmat", "std"] }
+x509-cert = { version = "0.2.5", default-features = false, optional = true }
 zstd = { version = "0.13.3", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
