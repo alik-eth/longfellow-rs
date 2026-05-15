@@ -54,6 +54,18 @@ pub mod verifier;
 pub enum CircuitVersion {
     V6 = 6,
     V7 = 7,
+    /// v12 issuer-pseudonym-privacy mdoc circuit (Task #3).
+    ///
+    /// Shares the v7 ZkSpec entry (`kZkSpecs` labels it `version 7`,
+    /// identical `block_enc` / Ligero rate / attribute encoding), so V12
+    /// routes alongside V7 for every parameter *except* the hash-circuit
+    /// public-input layout: the v12 hash circuit emits the
+    /// `contract_hash` + `nullifier` + `binding` + `escrow` +
+    /// `enroll_commit` + `enroll_nullifier` public-input wires (1600
+    /// extra GF(2^128) wires for the 1-attribute circuit). See
+    /// `vendor/longfellow-zk/lib/circuits/mdoc/mdoc_zk.cc`'s
+    /// `fill_attributes` for the canonical ordering.
+    V12 = 12,
 }
 
 /// Inputs for the mdoc_zk circuits.
@@ -937,17 +949,19 @@ pub(super) fn common_initialization(
 
 /// Hardcoded Ligero parameters for the signature circuit.
 fn signature_ligero_parameters(circuit_version: CircuitVersion) -> LigeroParameters {
+    // V12 reuses the v7 ZkSpec entry verbatim (`block_enc_sig` = 4096),
+    // so it shares V7's signature-circuit Ligero parameters.
     let block_enc = match circuit_version {
         CircuitVersion::V6 => 2945,
-        CircuitVersion::V7 => 4096,
+        CircuitVersion::V7 | CircuitVersion::V12 => 4096,
     };
     let inverse_rate = match circuit_version {
         CircuitVersion::V6 => LIGERO_INVERSE_RATE_V6,
-        CircuitVersion::V7 => LIGERO_INVERSE_RATE_V7,
+        CircuitVersion::V7 | CircuitVersion::V12 => LIGERO_INVERSE_RATE_V7,
     };
     let nreq = match circuit_version {
         CircuitVersion::V6 => LIGERO_NREQ_V6,
-        CircuitVersion::V7 => LIGERO_NREQ_V7,
+        CircuitVersion::V7 | CircuitVersion::V12 => LIGERO_NREQ_V7,
     };
     let block_size = (block_enc + 1) / (2 + inverse_rate);
     let witnesses_per_row = block_size - nreq;
@@ -965,24 +979,26 @@ fn hash_ligero_parameters(
     circuit_version: CircuitVersion,
     num_attributes: usize,
 ) -> LigeroParameters {
+    // V12 reuses the v7 ZkSpec `block_enc_hash` values verbatim
+    // (kZkSpecs entries 0..3, "Circuits produced 2026-04-07").
     let block_enc = match (circuit_version, num_attributes) {
         (_, 0) | (_, 5..) => panic!("unsupported number of attributes"),
         (CircuitVersion::V6, 1) => 4096,
         (CircuitVersion::V6, 2) => 4025,
         (CircuitVersion::V6, 3) => 4121,
         (CircuitVersion::V6, 4) => 4283,
-        (CircuitVersion::V7, 1) => 4151,
-        (CircuitVersion::V7, 2) => 4265,
-        (CircuitVersion::V7, 3) => 4307,
-        (CircuitVersion::V7, 4) => 4415,
+        (CircuitVersion::V7 | CircuitVersion::V12, 1) => 4151,
+        (CircuitVersion::V7 | CircuitVersion::V12, 2) => 4265,
+        (CircuitVersion::V7 | CircuitVersion::V12, 3) => 4307,
+        (CircuitVersion::V7 | CircuitVersion::V12, 4) => 4415,
     };
     let inverse_rate = match circuit_version {
         CircuitVersion::V6 => LIGERO_INVERSE_RATE_V6,
-        CircuitVersion::V7 => LIGERO_INVERSE_RATE_V7,
+        CircuitVersion::V7 | CircuitVersion::V12 => LIGERO_INVERSE_RATE_V7,
     };
     let nreq = match circuit_version {
         CircuitVersion::V6 => LIGERO_NREQ_V6,
-        CircuitVersion::V7 => LIGERO_NREQ_V7,
+        CircuitVersion::V7 | CircuitVersion::V12 => LIGERO_NREQ_V7,
     };
     let block_size = (block_enc + 1) / (2 + inverse_rate);
     let witnesses_per_row = block_size - nreq;

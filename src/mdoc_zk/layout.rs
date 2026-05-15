@@ -36,7 +36,7 @@ impl InputLayout {
     pub(crate) fn signature_statement_length(&self) -> usize {
         // Signature circuit input layout is unchanged between circuit versions 6 and 7.
         match self.version {
-            CircuitVersion::V6 | CircuitVersion::V7 => {}
+            CircuitVersion::V6 | CircuitVersion::V7 | CircuitVersion::V12 => {}
         }
         1 // implicit 1
             + 2 // issuer public key
@@ -51,7 +51,7 @@ impl InputLayout {
     pub(crate) fn signature_input_length(&self) -> usize {
         // Signature circuit input layout is unchanged between circuit versions 6 and 7.
         match self.version {
-            CircuitVersion::V6 | CircuitVersion::V7 => {}
+            CircuitVersion::V6 | CircuitVersion::V7 | CircuitVersion::V12 => {}
         }
         self.signature_statement_length()
             + 1 // hash of credential
@@ -132,13 +132,36 @@ impl InputLayout {
     pub(crate) fn hash_statement_length(&self) -> usize {
         let wires_per_attribute = match self.version {
             CircuitVersion::V6 => AttributeInputV6::LENGTH,
-            CircuitVersion::V7 => AttributeInputV7::LENGTH,
+            CircuitVersion::V7 | CircuitVersion::V12 => AttributeInputV7::LENGTH,
         };
         1 // implicit 1
             + usize::from(self.attributes) * wires_per_attribute // attribute CBOR data
             + 20 * 8 // time in RFC 3339 format
+            + self.v12_extra_hash_statement_wires() // v12 nullifier/escrow/enroll block
             + 3 * 2 // MAC tags
             + 1 // MAC verifier key share
+    }
+
+    /// Number of extra hash-circuit public-input wires the v12 mdoc
+    /// circuit carries between the `time` block and the MAC region.
+    ///
+    /// Mirrors the `fill_attributes` ordering in
+    /// `vendor/longfellow-zk/lib/circuits/mdoc/mdoc_zk.cc`: after the
+    /// `now[20]` bit-string the v12 circuit emits
+    ///   - `contract_hash`     8 bytes  -> 64 bits (`fill_bit_string`)
+    ///   - `nullifier_target`  256 bits (`push_v256_hash`)
+    ///   - `binding_target`    256 bits
+    ///   - `escrow_target`     256 bits
+    ///   - `enroll_commit`     256 bits
+    ///   - `enroll_nullifier`  256 bits
+    /// Total = 64 + 5 * 256 = 1344 wires. V6/V7 carry none of these.
+    pub(crate) fn v12_extra_hash_statement_wires(&self) -> usize {
+        match self.version {
+            CircuitVersion::V6 | CircuitVersion::V7 => 0,
+            CircuitVersion::V12 => {
+                V12_CONTRACT_HASH_BITS + 5 * V12_HASH_TARGET_BITS
+            }
+        }
     }
 
     /// Returns the length of the input for the hash circuit, in GF(2^128) field elements.
@@ -148,7 +171,7 @@ impl InputLayout {
         let sha_256_max_blocks = self.sha_256_max_blocks();
         let wires_per_attribute = match self.version {
             CircuitVersion::V6 => AttributeWitnessV6::LENGTH,
-            CircuitVersion::V7 => AttributeWitnessV7::LENGTH,
+            CircuitVersion::V7 | CircuitVersion::V12 => AttributeWitnessV7::LENGTH,
         };
         self.hash_statement_length()
             + 256 // hash of credential
@@ -168,7 +191,7 @@ impl InputLayout {
     pub(crate) fn sha_256_max_blocks(&self) -> usize {
         match self.version {
             CircuitVersion::V6 => SHA_256_CREDENTIAL_MAX_BLOCKS_V6,
-            CircuitVersion::V7 => SHA_256_CREDENTIAL_MAX_BLOCKS_V7,
+            CircuitVersion::V7 | CircuitVersion::V12 => SHA_256_CREDENTIAL_MAX_BLOCKS_V7,
         }
     }
 
@@ -207,7 +230,7 @@ impl InputLayout {
                 }
                 AttributeInputs::V6(attribute_inputs)
             }
-            CircuitVersion::V7 => {
+            CircuitVersion::V7 | CircuitVersion::V12 => {
                 let mut attribute_inputs = AttributeInputsV7::default();
                 for out in attribute_inputs.inputs[0..self.attributes.into()].iter_mut() {
                     let (chunk, rest) = input.split_at_mut(AttributeInputV7::LENGTH);
@@ -231,6 +254,36 @@ impl InputLayout {
         };
 
         let (time, input) = input.split_at_mut(20 * 8);
+
+        // v12 nullifier / escrow / enroll public-input block. Sits
+        // between `time` and the MAC region (see `fill_attributes` in
+        // `mdoc_zk.cc`). Empty for V6/V7.
+        let (v12_public, input) =
+            input.split_at_mut(self.v12_extra_hash_statement_wires());
+        let v12_public = match self.version {
+            CircuitVersion::V6 | CircuitVersion::V7 => None,
+            CircuitVersion::V12 => {
+                let (contract_hash, rest) =
+                    v12_public.split_at_mut(V12_CONTRACT_HASH_BITS);
+                let (nullifier, rest) = rest.split_at_mut(V12_HASH_TARGET_BITS);
+                let (binding, rest) = rest.split_at_mut(V12_HASH_TARGET_BITS);
+                let (escrow, rest) = rest.split_at_mut(V12_HASH_TARGET_BITS);
+                let (enroll_commit, rest) =
+                    rest.split_at_mut(V12_HASH_TARGET_BITS);
+                let (enroll_nullifier, rest) =
+                    rest.split_at_mut(V12_HASH_TARGET_BITS);
+                assert!(rest.is_empty());
+                Some(V12HashPublicInputs {
+                    contract_hash: contract_hash.try_into().unwrap(),
+                    nullifier: nullifier.try_into().unwrap(),
+                    binding: binding.try_into().unwrap(),
+                    escrow: escrow.try_into().unwrap(),
+                    enroll_commit: enroll_commit.try_into().unwrap(),
+                    enroll_nullifier: enroll_nullifier.try_into().unwrap(),
+                })
+            }
+        };
+
         let (mac_tags, input) = input.split_at_mut(3 * 2);
         let (mac_verifier_key_share, input) = input.split_first_mut().unwrap();
         assert!(input.is_empty());
@@ -239,6 +292,7 @@ impl InputLayout {
             implicit_one,
             attribute_inputs,
             time: time.try_into().unwrap(),
+            v12_public,
             mac_tags: mac_tags.try_into().unwrap(),
             mac_verifier_key_share,
         }
@@ -304,7 +358,9 @@ impl InputLayout {
                 }
                 AttributeWitnesses::V6(attribute_witnesses)
             }
-            CircuitVersion::V7 => {
+            // V12 reuses the v7 per-attribute witness shape; the v12
+            // delta is entirely in the public-input (statement) region.
+            CircuitVersion::V7 | CircuitVersion::V12 => {
                 let mut attribute_witnesses = AttributeWitnessesV7::default();
                 for out in attribute_witnesses.inputs[0..self.attributes.into()].iter_mut() {
                     let (chunk, rest) = input.split_at_mut(AttributeWitnessV7::LENGTH);
@@ -494,9 +550,41 @@ pub(crate) struct SplitHashStatement<'a> {
     pub(crate) implicit_one: &'a mut Field2_128,
     pub(crate) attribute_inputs: AttributeInputs<'a>,
     pub(crate) time: &'a mut [Field2_128; 20 * 8],
+    /// v12 nullifier / escrow / enroll public-input block. `Some` only
+    /// for [`CircuitVersion::V12`]; `None` for V6/V7.
+    pub(crate) v12_public: Option<V12HashPublicInputs<'a>>,
     pub(crate) mac_tags: &'a mut [Field2_128; 6],
     pub(crate) mac_verifier_key_share: &'a mut Field2_128,
 }
+
+/// The six v12-mdoc hash-circuit public-input groups, as bit-strings of
+/// `Field2_128` 0/1 values.
+///
+/// Ordering and widths mirror `fill_attributes` in
+/// `vendor/longfellow-zk/lib/circuits/mdoc/mdoc_zk.cc`: `contract_hash`
+/// is an 8-byte big-endian bit-string (`fill_bit_string`), the five
+/// 256-bit targets are `push_v256_hash` outputs.
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+pub(crate) struct V12HashPublicInputs<'a> {
+    /// 8-byte nullifier-domain contract hash, as 64 bits.
+    pub(crate) contract_hash: &'a mut [Field2_128; V12_CONTRACT_HASH_BITS],
+    /// `SHA-256(0x01 || holder_seed || context)` nullifier, 256 bits.
+    pub(crate) nullifier: &'a mut [Field2_128; V12_HASH_TARGET_BITS],
+    /// Holder-binding target hash, 256 bits.
+    pub(crate) binding: &'a mut [Field2_128; V12_HASH_TARGET_BITS],
+    /// Identity-escrow digest target, 256 bits.
+    pub(crate) escrow: &'a mut [Field2_128; V12_HASH_TARGET_BITS],
+    /// `SHA-256(0x03 || holder_seed)` enroll-commit, 256 bits.
+    pub(crate) enroll_commit: &'a mut [Field2_128; V12_HASH_TARGET_BITS],
+    /// `SHA-256(0x02 || e || ENROLL_DOMAIN_SEP)` enroll-nullifier, 256 bits.
+    pub(crate) enroll_nullifier: &'a mut [Field2_128; V12_HASH_TARGET_BITS],
+}
+
+/// Bit-width of the v12 `contract_hash` public input (8 bytes).
+pub(crate) const V12_CONTRACT_HASH_BITS: usize = 8 * 8;
+
+/// Bit-width of each v12 256-bit hash-target public input.
+pub(crate) const V12_HASH_TARGET_BITS: usize = 256;
 
 /// Pointers to different parts of the hash circuit's inputs.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
