@@ -40,3 +40,36 @@ pub fn p7s_circuit_v12_decompressed() -> &'static [u8] {
         })
         .as_slice()
 }
+
+/// Raw zstd-compressed bytes of the v12 mdoc circuit binary.
+///
+/// Layout: `Circuit::<FieldP256>` (signature) + `Circuit::<Field2_128>`
+/// (hash) back-to-back, as serialized by the C++ vendor's
+/// `generate_circuit` and decoded by
+/// [`crate::mdoc_zk::common_initialization`] (Task #3 item 2). The
+/// committed file is `crates/longfellow/circuits/mdoc_circuit_v12.bin.zst`
+/// (349 KB compressed, 118 MB raw, raw sha256 `568cf594...6dd4`); the v12
+/// hash circuit has `npub = 2296` (696 ISRG baseline + 1600 v12 wires).
+pub static MDOC_CIRCUIT_V12_ZST: &[u8] =
+    include_bytes!("../circuits/mdoc_circuit_v12.bin.zst");
+
+/// Decompress and cache the v12 mdoc circuit bytes.
+///
+/// First call pays the zstd decode; subsequent calls return the cached
+/// `Vec<u8>` reference. Cached for the process lifetime via `OnceLock`.
+///
+/// Gated to `feature = "prover"` because `zstd` itself is prover-only.
+/// Verifier-only (`--features verifier --no-default-features`) consumers
+/// receive the raw decompressed bytes from the host (the SP1 wrapper) and
+/// pass them straight to [`crate::mdoc_zk::verify_v12_with_circuit`].
+#[cfg(feature = "prover")]
+pub fn mdoc_circuit_v12_decompressed() -> &'static [u8] {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Vec<u8>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            zstd::decode_all(MDOC_CIRCUIT_V12_ZST)
+                .expect("mdoc v12 circuit fixture decompresses")
+        })
+        .as_slice()
+}

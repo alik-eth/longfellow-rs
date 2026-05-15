@@ -179,6 +179,37 @@ impl MdocZkVerifier {
             signature_layout: self.signature_ligero_verifier.tableau_layout(),
         }
     }
+
+    /// Borrowed view of the decoded hash circuit. Used by the no_std
+    /// `mdoc_zk::stateless::verify_v12` orchestrator to drive Sumcheck.
+    pub(crate) fn hash_circuit(&self) -> &Circuit<Field2_128> {
+        &self.hash_circuit
+    }
+
+    /// Borrowed view of the decoded signature circuit.
+    pub(crate) fn signature_circuit(&self) -> &Circuit<FieldP256> {
+        &self.signature_circuit
+    }
+
+    /// Borrowed view of the hash-circuit Ligero verifier.
+    pub(crate) fn hash_ligero_verifier(&self) -> &LigeroVerifier<Field2_128> {
+        &self.hash_ligero_verifier
+    }
+
+    /// Borrowed view of the signature-circuit Ligero verifier.
+    pub(crate) fn signature_ligero_verifier(&self) -> &LigeroVerifier<FieldP256> {
+        &self.signature_ligero_verifier
+    }
+
+    /// Number of public inputs the hash circuit expects.
+    pub fn hash_circuit_num_public_inputs(&self) -> usize {
+        self.hash_circuit.num_public_inputs()
+    }
+
+    /// Number of public inputs the signature circuit expects.
+    pub fn signature_circuit_num_public_inputs(&self) -> usize {
+        self.signature_circuit.num_public_inputs()
+    }
 }
 
 /// Identifier and value of an attribute.

@@ -45,7 +45,12 @@ mod mdoc;
 pub mod prover;
 #[cfg(feature = "prover")]
 mod sha256;
+pub mod stateless;
 pub mod verifier;
+
+pub use stateless::{MdocV12PublicOutputs, verify_v12_with_circuit};
+#[cfg(feature = "prover")]
+pub use stateless::verify_v12;
 
 /// Versions of the mdoc_zk circuit interface.
 #[derive(Debug, Clone, Copy)]
