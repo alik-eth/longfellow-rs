@@ -13,6 +13,23 @@
 
 use alloc::vec::Vec;
 
+/// Decompress a zstd blob via the pure-Rust `ruzstd` decoder.
+///
+/// `ruzstd` replaces the C-backed `zstd` crate so the `prover` feature
+/// compiles for `wasm32-unknown-unknown` (and other targets without a C
+/// toolchain). Decode-only — the prover never compresses.
+#[cfg(feature = "prover")]
+fn zstd_decode(compressed: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut decoder = ruzstd::streaming_decoder::StreamingDecoder::new(compressed)
+        .expect("circuit fixture is a valid zstd stream");
+    let mut decompressed = Vec::new();
+    decoder
+        .read_to_end(&mut decompressed)
+        .expect("circuit fixture decompresses");
+    decompressed
+}
+
 /// Raw zstd-compressed bytes of the v12 p7s circuit binary.
 ///
 /// Layout: `Circuit::<Field2_128>` + `Circuit::<FieldP256>` back-to-back,
@@ -34,10 +51,7 @@ pub fn p7s_circuit_v12_decompressed() -> &'static [u8] {
     use std::sync::OnceLock;
     static CACHE: OnceLock<Vec<u8>> = OnceLock::new();
     CACHE
-        .get_or_init(|| {
-            zstd::decode_all(P7S_CIRCUIT_V12_ZST)
-                .expect("p7s v12 circuit fixture decompresses")
-        })
+        .get_or_init(|| zstd_decode(P7S_CIRCUIT_V12_ZST))
         .as_slice()
 }
 
@@ -67,9 +81,6 @@ pub fn mdoc_circuit_v12_decompressed() -> &'static [u8] {
     use std::sync::OnceLock;
     static CACHE: OnceLock<Vec<u8>> = OnceLock::new();
     CACHE
-        .get_or_init(|| {
-            zstd::decode_all(MDOC_CIRCUIT_V12_ZST)
-                .expect("mdoc v12 circuit fixture decompresses")
-        })
+        .get_or_init(|| zstd_decode(MDOC_CIRCUIT_V12_ZST))
         .as_slice()
 }

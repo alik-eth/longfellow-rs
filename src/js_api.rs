@@ -1,4 +1,5 @@
 use crate::mdoc_zk::{CircuitVersion, prover::MdocZkProver};
+use wasm_bindgen::JsError;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 /// Initialize the prover by loading a decompressed circuit file.
@@ -62,4 +63,25 @@ extern "C" {
 fn convert_error(error: anyhow::Error) -> MdocZkError {
     let message = format!("{error:#}");
     MdocZkError::new(message)
+}
+
+/// Run one full p7s v12 prove over the embedded TestAnchorA fixture.
+///
+/// Returns the serialized proof bytes. Browser measurement harness: the
+/// circuit is embedded in the wasm module; only the small witness/public
+/// fixtures need bundling here.
+#[wasm_bindgen]
+pub fn p7s_prove_v12_fixture() -> Result<Vec<u8>, JsError> {
+    const WITNESS: &[u8] =
+        include_bytes!("../tests/fixtures/p7s/blobs/testanchor_a_v12_witness.bin");
+    const PUBLIC: &[u8] =
+        include_bytes!("../tests/fixtures/p7s/blobs/testanchor_a_v12_public.bin");
+    crate::p7s_zk::prove_v12(WITNESS, PUBLIC).map_err(|e| JsError::new(&format!("{e:#}")))
+}
+
+/// Current wasm linear-memory size in bytes. wasm memory only ever grows,
+/// so reading this immediately after a prove yields that run's peak.
+#[wasm_bindgen]
+pub fn wasm_memory_bytes() -> f64 {
+    (core::arch::wasm32::memory_size(0) as u64 * 65536) as f64
 }

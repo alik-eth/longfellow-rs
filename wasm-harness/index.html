@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>p7s v12 WASM prover — Web Worker harness</title>
+  <style>
+    body { font-family: ui-monospace, monospace; padding: 1.5rem; background:#111; color:#0f0; }
+    h1 { color:#fff; font-size:1rem; }
+    pre { font-size:0.95rem; line-height:1.5; }
+    #live { color:#ff0; }
+  </style>
+</head>
+<body>
+  <h1>p7s v12 WASM prover — Web Worker harness</h1>
+  <!-- Main-thread liveness proof: this counter is driven by a 100ms timer
+       on the MAIN thread. If it keeps advancing while the worker proves,
+       the main thread is not blocked. -->
+  <p id="live">main-thread alive ticks: 0 | spinner: -</p>
+  <pre id="out" data-done="0">starting…</pre>
+  <script type="module">
+    const GiB = 2 ** 30;
+    const out = document.getElementById('out');
+    const live = document.getElementById('live');
+    const log = (m) => { out.textContent += m + '\n'; console.log(m); };
+
+    // Main-thread liveness ticker.
+    let ticks = 0;
+    const spin = ['-', '\\', '|', '/'];
+    setInterval(() => {
+      ticks++;
+      live.textContent =
+        `main-thread alive ticks: ${ticks} | spinner: ${spin[ticks % 4]}`;
+    }, 100);
+
+    out.textContent = '';
+    log('UA: ' + navigator.userAgent);
+    try {
+      log('spawning worker…');
+      const worker = new Worker('./worker.js', { type: 'module' });
+      const t0 = performance.now();
+      worker.onmessage = (e) => {
+        const d = e.data;
+        const roundtripS = ((performance.now() - t0) / 1000).toFixed(1);
+        if (!d.ok) {
+          log('WORKER ERROR: ' + d.error);
+          document.title = 'RESULT error';
+          out.dataset.done = 'error';
+          return;
+        }
+        log('--- DONE (worker) ---');
+        log('proof_len_bytes=' + d.proofLen);
+        log('worker_wall_seconds=' + (d.wallMs / 1000).toFixed(1));
+        log('page_roundtrip_seconds=' + roundtripS);
+        log('peak_wasm_memory_bytes=' + d.peakBytes);
+        log('peak_gib=' + (d.peakBytes / GiB).toFixed(3));
+        log('main_thread_ticks_during_prove=' + ticks +
+            ' (>0 ⇒ page stayed responsive)');
+        document.title = 'RESULT ok len=' + d.proofLen +
+          ' s=' + (d.wallMs / 1000).toFixed(1) +
+          ' gib=' + (d.peakBytes / GiB).toFixed(3) + ' ticks=' + ticks;
+        out.dataset.done = 'ok';
+      };
+      worker.onerror = (e) => {
+        log('WORKER onerror: ' + (e.message || e));
+        document.title = 'RESULT error';
+        out.dataset.done = 'error';
+      };
+      log('proving p7s v12 in worker — main thread free…');
+      worker.postMessage('prove');
+    } catch (e) {
+      log('ERROR: ' + (e && e.stack ? e.stack : e));
+      document.title = 'RESULT error';
+      out.dataset.done = 'error';
+    }
+  </script>
+</body>
+</html>
