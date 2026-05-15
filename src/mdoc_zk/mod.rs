@@ -827,6 +827,112 @@ impl CircuitStatements {
     pub fn hash_statement(&self) -> &[Field2_128] {
         &self.hash_statement
     }
+
+    /// Fill the v12 hash-circuit public-input block — `contract_hash`
+    /// plus the five 256-bit hash targets (`nullifier`, `binding`,
+    /// `escrow`, `enroll_commit`, `enroll_nullifier`).
+    ///
+    /// `CircuitStatements::new` builds the attribute / time / MAC
+    /// portion (identical to V7); the v12 circuit additionally exposes
+    /// this 1344-wire block between `time` and the MAC region. This
+    /// method mirrors `fill_attributes`'s v12 path in
+    /// `vendor/longfellow-zk/lib/circuits/mdoc/mdoc_zk.cc`:
+    ///   * `contract_hash` via `fill_bit_string` (byte `i`, bit `j` at
+    ///     wire `i*8+j`, LSB-first);
+    ///   * each hash target via `push_v256_hash` (wire `k` holds bit
+    ///     `k % 8` of byte `(255 - k) / 8`).
+    ///
+    /// Only valid for [`CircuitVersion::V12`]; panics otherwise (the
+    /// statement carries no v12 block).
+    pub fn fill_v12_public(
+        &mut self,
+        version: CircuitVersion,
+        num_attributes: usize,
+        contract_hash: &[u8; 8],
+        nullifier: &[u8; 32],
+        binding: &[u8; 32],
+        escrow: &[u8; 32],
+        enroll_commit: &[u8; 32],
+        enroll_nullifier: &[u8; 32],
+    ) -> Result<(), anyhow::Error> {
+        let layout = InputLayout::new(
+            version,
+            num_attributes
+                .try_into()
+                .map_err(|_| anyhow!("unsupported number of attributes"))?,
+        )?;
+        let mut split = layout.split_hash_statement(&mut self.hash_statement);
+        let v12 = split
+            .v12_public
+            .as_mut()
+            .ok_or_else(|| anyhow!("fill_v12_public requires CircuitVersion::V12"))?;
+        byte_array_as_bits(contract_hash, v12.contract_hash);
+        v256_hash_as_bits(nullifier, v12.nullifier);
+        v256_hash_as_bits(binding, v12.binding);
+        v256_hash_as_bits(escrow, v12.escrow);
+        v256_hash_as_bits(enroll_commit, v12.enroll_commit);
+        v256_hash_as_bits(enroll_nullifier, v12.enroll_nullifier);
+        Ok(())
+    }
+
+    /// Serialize both statement arrays to raw little-endian
+    /// field-element byte blobs `(hash_blob, signature_blob)`, with the
+    /// MAC region zeroed.
+    ///
+    /// `mdoc_zk::stateless::verify_v12` expects the host-supplied
+    /// statement blobs with the MAC slots zeroed (it re-derives the MAC
+    /// verifier key share from the post-commit transcript and fills the
+    /// MAC region itself). This serializer produces exactly that input.
+    pub fn into_v12_blobs(
+        mut self,
+        version: CircuitVersion,
+        num_attributes: usize,
+    ) -> Result<(Vec<u8>, Vec<u8>), anyhow::Error> {
+        let layout = InputLayout::new(
+            version,
+            num_attributes
+                .try_into()
+                .map_err(|_| anyhow!("unsupported number of attributes"))?,
+        )?;
+        {
+            let split = layout.split_hash_statement(&mut self.hash_statement);
+            for wire in split.mac_tags.iter_mut() {
+                *wire = Field2_128::ZERO;
+            }
+            *split.mac_verifier_key_share = Field2_128::ZERO;
+        }
+        {
+            let split = layout.split_signature_statement(&mut self.signature_statement);
+            for wire in split.mac_tags.iter_mut() {
+                *wire = FieldP256::ZERO;
+            }
+            for wire in split.mac_verifier_key_share.iter_mut() {
+                *wire = FieldP256::ZERO;
+            }
+        }
+        let mut hash_blob = Vec::new();
+        for fe in &self.hash_statement {
+            fe.encode(&mut hash_blob)?;
+        }
+        let mut signature_blob = Vec::new();
+        for fe in &self.signature_statement {
+            fe.encode(&mut signature_blob)?;
+        }
+        Ok((hash_blob, signature_blob))
+    }
+}
+
+/// Encode a 32-byte hash digest as 256 `Field2_128` bit-wires using the
+/// C++ `push_v256_hash` convention: wire `j` holds bit `j % 8` of byte
+/// `(255 - j) / 8`. Inverse of `mdoc_zk::stateless::bits_to_bytes`.
+#[cfg(feature = "prover")]
+fn v256_hash_as_bits(hash32: &[u8; 32], out: &mut [Field2_128; 256]) {
+    for (j, wire) in out.iter_mut().enumerate() {
+        let byte_idx = (255 - j) / 8;
+        let bit_idx = j % 8;
+        let bit = (hash32[byte_idx] >> bit_idx) & 1;
+        *wire = Field2_128::inject_bits::<1>(bit as u16);
+    }
 }
 
 // Length of `bytes(17) "elementIdentifier"`` when serialized as CBOR.
