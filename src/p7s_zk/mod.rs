@@ -63,5 +63,9 @@ pub use prover::{P7sV12PublicOutputs, P7sZkProver};
 pub use public_inputs::ParsedPublic;
 #[cfg(feature = "prover")]
 pub use stateless::{prove_v12, verify_v12};
-pub use verifier::P7sZkVerifier;
+pub use verifier::{P7sZkVerifier, verify_v12_with_circuit};
+/// Verifier-only build: re-export the verifier-side `P7sV12PublicOutputs`
+/// (the prover-gated re-export above shadows this when `prover` is on).
+#[cfg(not(feature = "prover"))]
+pub use verifier::P7sV12PublicOutputs;
 pub use witness::ParsedWitness;

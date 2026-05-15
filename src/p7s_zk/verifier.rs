@@ -234,6 +234,60 @@ impl P7sZkVerifier {
     }
 }
 
+/// Stateless verifier-only v12 p7s verify against caller-supplied
+/// circuit bytes.
+///
+/// no_std-clean mirror of [`crate::mdoc_zk::stateless::verify_v12_with_circuit`].
+/// Unlike [`crate::p7s_zk::stateless::verify_v12`] (which is `prover`-gated
+/// because it owns the zstd decompression of the baked circuit fixture),
+/// this entry point takes the **already-decompressed** `[hash || sig]`
+/// circuit blob and is therefore the SP1 / riscv32 guest entry point.
+///
+/// `circuit_bytes` is the decompressed back-to-back-encoded p7s v12
+/// circuit blob; `public_blob` is the parsed-public input blob; `proof`
+/// is the serialized p7s proof (4-byte schema prefix + body).
+///
+/// Builds under `--features verifier --no-default-features`.
+pub fn verify_v12_with_circuit(
+    circuit_bytes: &[u8],
+    public_blob: &[u8],
+    proof: &[u8],
+) -> Result<P7sV12PublicOutputs, anyhow::Error> {
+    use crate::p7s_zk::params::{P7S_NREQ, P7S_RATE_INV, default_ligero_params_for_circuit};
+    use crate::fields::CodecFieldElement;
+
+    // Decode the back-to-back circuits to derive the default Ligero
+    // parameters (mirrors `p7s_zk::stateless::derive_default_params`).
+    let mut cursor = Cursor::new(circuit_bytes);
+    let hash_circuit = Circuit::<Field2_128>::decode(&mut cursor)
+        .context("p7s verify_v12_with_circuit: hash circuit decode")?;
+    let sig_circuit = Circuit::<FieldP256>::decode(&mut cursor)
+        .context("p7s verify_v12_with_circuit: sig circuit decode")?;
+    if cursor.position() as usize != circuit_bytes.len() {
+        return Err(anyhow!(
+            "p7s verify_v12_with_circuit: trailing bytes after both circuits decode"
+        ));
+    }
+    let hash_params = default_ligero_params_for_circuit(
+        &hash_circuit,
+        P7S_RATE_INV,
+        P7S_NREQ,
+        Field2_128::num_bytes() as u64,
+        2,
+    );
+    let sig_params = default_ligero_params_for_circuit(
+        &sig_circuit,
+        P7S_RATE_INV,
+        P7S_NREQ,
+        FieldP256::num_bytes() as u64,
+        FieldP256::num_bytes() as u64,
+    );
+
+    let verifier = P7sZkVerifier::new(circuit_bytes, hash_params, sig_params)
+        .context("p7s verify_v12_with_circuit: P7sZkVerifier::new failed")?;
+    verifier.verify(public_blob, proof)
+}
+
 /// Suppress unused-warning when verifier-only build path doesn't reach the
 /// `Vec` import via this module.
 #[allow(dead_code)]
