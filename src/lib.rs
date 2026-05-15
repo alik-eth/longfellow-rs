@@ -368,7 +368,12 @@ impl<C: Codec, T> ParameterizedCodec<T> for C {
 // only need the rlib. These never run — SP1's zkvm runtime (or any other consumer) supplies real
 // allocator + panic_handler when actually linking. Gated to (no std) + (no prover) so it cannot
 // collide with consumers that bring their own.
-#[cfg(all(not(feature = "std"), not(feature = "prover")))]
+//
+// `target_os = "zkvm"` is excluded: SP1's `riscv*-succinct-zkvm-elf`
+// target ships a real `std` (its runtime provides the allocator + panic
+// handler), so emitting the stub `panic_handler` / `global_allocator`
+// here would be a duplicate-lang-item collision with libstd.
+#[cfg(all(not(feature = "std"), not(feature = "prover"), not(target_os = "zkvm")))]
 mod no_std_artifact_stubs {
     use core::alloc::{GlobalAlloc, Layout};
 
