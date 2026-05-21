@@ -79,6 +79,19 @@ pub fn p7s_prove_v12_fixture() -> Result<Vec<u8>, JsError> {
     crate::p7s_zk::prove_v12(WITNESS, PUBLIC).map_err(|e| JsError::new(&format!("{e:#}")))
 }
 
+/// Verify a p7s v12 proof against the embedded TestAnchorA public blob.
+///
+/// Returns `Ok` iff the proof is cryptographically accepted. Pairs with
+/// [`p7s_prove_v12_fixture`] for an end-to-end in-browser round trip.
+#[wasm_bindgen]
+pub fn p7s_verify_v12_fixture(proof: &[u8]) -> Result<(), JsError> {
+    const PUBLIC: &[u8] =
+        include_bytes!("../tests/fixtures/p7s/blobs/testanchor_a_v12_public.bin");
+    crate::p7s_zk::verify_v12(PUBLIC, proof)
+        .map(|_| ())
+        .map_err(|e| JsError::new(&format!("{e:#}")))
+}
+
 /// Current wasm linear-memory size in bytes. wasm memory only ever grows,
 /// so reading this immediately after a prove yields that run's peak.
 #[wasm_bindgen]

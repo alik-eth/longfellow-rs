@@ -47,25 +47,31 @@
           out.dataset.done = 'error';
           return;
         }
+        const verdict = d.verified ? 'ACCEPTED' : 'REJECTED';
         log('--- DONE (worker) ---');
         log('proof_len_bytes=' + d.proofLen);
-        log('worker_wall_seconds=' + (d.wallMs / 1000).toFixed(1));
+        log('prove_seconds=' + (d.proveMs / 1000).toFixed(1));
+        log('verify_seconds=' + (d.verifyMs / 1000).toFixed(2));
+        log('verify_result=' + verdict +
+            (d.verified ? '' : ' — ' + d.verifyError));
         log('page_roundtrip_seconds=' + roundtripS);
         log('peak_wasm_memory_bytes=' + d.peakBytes);
         log('peak_gib=' + (d.peakBytes / GiB).toFixed(3));
         log('main_thread_ticks_during_prove=' + ticks +
             ' (>0 ⇒ page stayed responsive)');
-        document.title = 'RESULT ok len=' + d.proofLen +
-          ' s=' + (d.wallMs / 1000).toFixed(1) +
+        document.title = 'RESULT ' + (d.verified ? 'ok' : 'VERIFY_FAILED') +
+          ' verify=' + verdict +
+          ' len=' + d.proofLen +
+          ' s=' + (d.proveMs / 1000).toFixed(1) +
           ' gib=' + (d.peakBytes / GiB).toFixed(3) + ' ticks=' + ticks;
-        out.dataset.done = 'ok';
+        out.dataset.done = d.verified ? 'ok' : 'verify_failed';
       };
       worker.onerror = (e) => {
         log('WORKER onerror: ' + (e.message || e));
         document.title = 'RESULT error';
         out.dataset.done = 'error';
       };
-      log('proving p7s v12 in worker — main thread free…');
+      log('prove + verify p7s v12 in worker — main thread free…');
       worker.postMessage('prove');
     } catch (e) {
       log('ERROR: ' + (e && e.stack ? e.stack : e));
