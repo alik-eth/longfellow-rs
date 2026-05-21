@@ -1,9 +1,14 @@
-//! WASM memory-peak measurement harness for the p7s v12 prover.
+//! WASM memory-peak measurement harness for the p7s v13 prover
+//! (variable-length serialNumber, Task #37).
 //!
-//! Runs one full `P7sZkProver::prove` over the TestAnchorA v12 fixture and
+//! Runs one full `P7sZkProver::prove` over the TestAnchorA fixture and
 //! reports the peak wasm linear-memory size. wasm linear memory only ever
 //! grows (`memory.grow` never shrinks), so the size observed after the
 //! prove completes is the high-water mark for the whole run.
+//!
+//! v13 re-measure (2026-05-21): peak 1.241 GiB via the Node WASI path —
+//! unchanged from v12; the wider 46-byte serialNumber window adds no
+//! meaningful memory.
 //!
 //! Build + run:
 //! ```sh

@@ -1,13 +1,17 @@
-# p7s v12 WASM prover — browser harness
+# p7s v13 WASM prover — browser harness
 
-A minimal browser harness proving that the pure-Rust Longfellow **p7s v12
-prover** runs in a real browser, off the main thread, via a Web Worker —
-and that the proof it produces verifies, in-browser, end to end.
+A minimal browser harness proving that the pure-Rust Longfellow **p7s v13
+prover** (variable-length serialNumber, Task #37) runs in a real browser,
+off the main thread, via a Web Worker — and that the proof it produces
+verifies, in-browser, end to end.
 
 Measured (Chrome 148, headless): full **prove → verify** round trip,
-`verify_result=ACCEPTED`, peak **1.137 GiB** wasm linear memory, prove
-~20–50s + verify ~12s (varies with host load), main thread stays fully
+`verify_result=ACCEPTED`, peak **1.135 GiB** wasm linear memory, prove
+~16s + verify ~6.5s (varies with host load), main thread stays fully
 responsive (the on-page liveness counter ticks uninterrupted throughout).
+The v13 variable-length serialNumber adds no meaningful memory vs v12
+(peak was 1.137 GiB at v12). A `wasm32-wasip1` / Node WASI re-measure
+(`wasm_mem_run.mjs`) reports a 1.241 GiB peak via that allocator path.
 
 ## Files
 
