@@ -209,13 +209,14 @@ pub(crate) fn append_hash_private_region(
     push_sha_padded_bytes(out, &ec_sw);
     push_sha_block_witnesses(out, &ec_sw);
 
-    // Step 33-34 — enroll_nullifier SHA witness.
+    // Step 33-34 — enroll_nullifier SHA witness (v13: variable-length
+    // stable_id; L is read from the anchor inside `extract_stable_id`).
     let stable_id = crate::p7s_zk::preimages::extract_stable_id(
         &wit.cert_tbs,
         wit.subject_sn_offset_in_tbs as usize,
     )
-    .expect("subject_sn_offset_in_tbs window fits in cert_tbs (parser-validated)");
-    let en_sw = build_enroll_nullifier_sha_witness(&stable_id);
+    .expect("subject_sn variable-length window validated by parse_witness_blob");
+    let en_sw = build_enroll_nullifier_sha_witness(stable_id);
     debug_assert_eq!(en_sw.max_blocks, ENROLL_NULLIFIER_SHA_BLOCKS);
     push_sha_padded_bytes(out, &en_sw);
     push_sha_block_witnesses(out, &en_sw);

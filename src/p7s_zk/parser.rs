@@ -30,14 +30,22 @@ const SPKI_P256_PREFIX: [u8; SPKI_PREFIX_LEN] = [
     0x03, 0x42, 0x00, // BIT STRING hdr (l=66, unused=0)
 ];
 
-/// 9-byte X.520 serialNumber DER prefix asserted in-circuit at
-/// `cert_tbs[subject_sn_offset..+9]`. Mirrored from C++ vendor's
-/// `kSubjectSnAnchor` (`p7s_zk.cc:356`).
+/// 9-byte X.520 serialNumber DER anchor asserted in-circuit at
+/// `cert_tbs[subject_sn_offset..+9]`. v13 (Task #37): bytes 1 (outer
+/// SEQUENCE length `S`) and 8 (PrintableString length `L`) are
+/// variable — placeholders here, validated via the `S == L + 7`
+/// linkage. The 7 length-independent bytes are asserted by index
+/// against `SUBJECT_SN_ANCHOR_CONST_IDX`. Mirrors C++ `kSubjectSnAnchor`
+/// + `kSubjectSnAnchorConstIdx` (`p7s_zk.cc`).
 const SUBJECT_SN_ANCHOR: [u8; SUBJECT_SN_ANCHOR_LEN] = [
-    0x30, 0x17, // ATV SEQUENCE (l=23)
+    0x30, 0x00, // ATV SEQUENCE; [1] = S (variable)
     0x06, 0x03, 0x55, 0x04, 0x05, // OID 2.5.4.5 (serialNumber)
-    0x13, 0x10, // PrintableString (l=16)
+    0x13, 0x00, // PrintableString; [8] = L (variable)
 ];
+
+/// Indices into `SUBJECT_SN_ANCHOR` whose bytes are length-independent
+/// (everything except [1] = `S` and [8] = `L`).
+const SUBJECT_SN_ANCHOR_CONST_IDX: [usize; 7] = [0, 2, 3, 4, 5, 6, 7];
 
 /// 17-byte CMS messageDigest attribute DER prefix asserted in-circuit at
 /// `signed_attrs[md_offset..+17]`. Mirrored from C++ vendor's
@@ -275,9 +283,12 @@ pub fn parse_witness_blob(blob: &[u8]) -> Result<ParsedWitness, anyhow::Error> {
     let subject_sn_offset_in_tbs = r
         .read_u32_le()
         .context("witness: subject_sn_offset_in_tbs")?;
-    if (subject_sn_offset_in_tbs as usize) + SUBJECT_SN_WINDOW_LEN > (cert_tbs_len as usize) {
+    // The 9-byte serialNumber DER anchor must fit; the value-length
+    // bound (`9 + L`) is checked below once `L` is read from the
+    // anchor (v13, Task #37 — variable-length serialNumber).
+    if (subject_sn_offset_in_tbs as usize) + SUBJECT_SN_ANCHOR_LEN > (cert_tbs_len as usize) {
         return Err(anyhow!(
-            "witness: subject_sn_offset + window exceeds cert_tbs_len"
+            "witness: subject_sn_offset + anchor exceeds cert_tbs_len"
         ));
     }
     let subject_dn_start_offset_in_tbs = r
@@ -306,14 +317,54 @@ pub fn parse_witness_blob(blob: &[u8]) -> Result<ParsedWitness, anyhow::Error> {
         ));
     }
 
-    // Belt-and-suspenders: 9-byte X.520 serialNumber DER anchor.
-    if cert_tbs[subject_sn_offset_in_tbs as usize
-        ..(subject_sn_offset_in_tbs as usize) + SUBJECT_SN_ANCHOR_LEN]
-        != SUBJECT_SN_ANCHOR
+    // v13 (Task #37) — variable-length X.520 serialNumber validation.
+    // Belt-and-suspenders host mirror of the in-circuit gadget:
+    //   * the 7 length-independent anchor bytes (idx 0, 2..=7),
+    //   * the DER length linkage S == L + 7 (S = anchor[1], L = anchor[8]),
+    //   * the value length L within [STABLE_ID_MIN_LEN, STABLE_ID_MAX_LEN],
+    //   * the value (9 + L) fits within cert_tbs,
+    //   * the ETSI EN 319 412-1 `[A-Z]{5}-` natural-person prefix.
     {
-        return Err(anyhow!(
-            "witness: X.520 serialNumber DER anchor mismatch at subject_sn_offset"
-        ));
+        let off = subject_sn_offset_in_tbs as usize;
+        let anchor = &cert_tbs[off..off + SUBJECT_SN_ANCHOR_LEN];
+        for &idx in &SUBJECT_SN_ANCHOR_CONST_IDX {
+            if anchor[idx] != SUBJECT_SN_ANCHOR[idx] {
+                return Err(anyhow!(
+                    "witness: X.520 serialNumber DER anchor mismatch at subject_sn_offset"
+                ));
+            }
+        }
+        let s = anchor[1] as usize;
+        let l = anchor[8] as usize;
+        if !(STABLE_ID_MIN_LEN..=STABLE_ID_MAX_LEN).contains(&l) {
+            return Err(anyhow!(
+                "witness: serialNumber length {} out of v13 range [{}, {}]",
+                l,
+                STABLE_ID_MIN_LEN,
+                STABLE_ID_MAX_LEN
+            ));
+        }
+        if s != l + 7 {
+            return Err(anyhow!(
+                "witness: serialNumber DER length linkage broken (S={}, L={}, expected S==L+7)",
+                s,
+                l
+            ));
+        }
+        if off + SUBJECT_SN_ANCHOR_LEN + l > cert_tbs_len as usize {
+            return Err(anyhow!(
+                "witness: serialNumber value (9 + L) exceeds cert_tbs_len"
+            ));
+        }
+        let value = &cert_tbs[off + SUBJECT_SN_ANCHOR_LEN..off + SUBJECT_SN_ANCHOR_LEN + l];
+        let etsi_ok =
+            value[..5].iter().all(u8::is_ascii_uppercase) && value[5] == b'-';
+        if !etsi_ok {
+            return Err(anyhow!(
+                "witness: serialNumber is not an ETSI EN 319 412-1 \
+                 natural-person identifier (expected an [A-Z]{{5}}- prefix)"
+            ));
+        }
     }
 
     // v12 holder_seed at the tail.

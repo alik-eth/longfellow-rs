@@ -7,7 +7,9 @@
 //! Preimages:
 //!   * per-app nullifier:    `0x01 || holder_seed[32] || context_hash[32]`  (65 bytes, 2 SHA blocks)
 //!   * enroll commit:        `0x03 || holder_seed[32]`                       (33 bytes, 1 SHA block)
-//!   * enroll nullifier:     `0x02 || stable_id[16] || ENROLL_DOMAIN_SEP[16]` (33 bytes, 1 SHA block)
+//!   * enroll nullifier:     `0x02 || stable_id[0..L] || ENROLL_DOMAIN_SEP[16]` (v13: 1 + L + 16
+//!     bytes, L in [8, 37], always 1 SHA block; no length-prefix byte, so L=16 is
+//!     byte-identical to the v12 preimage)
 
 use crate::p7s_zk::sha256_witness::{ShaWitness, compute_sha_witness};
 
@@ -48,10 +50,19 @@ pub(crate) const CONTEXT_HASH_LEN: usize = 32;
 /// C++: `kSubjectSnAnchorLen = 9` (`p7s_circuit.h:144`).
 pub(crate) const SUBJECT_SN_ANCHOR_LEN: usize = 9;
 
-/// Stable-ID length, sourced from cert_tbs after the SN anchor (16 bytes).
-///
-/// C++: `kStableIdLen = 16` (`p7s_circuit.h:143`).
+/// Legacy DIIA RNOKPP stable-ID length (16 bytes) — retained as the
+/// canonical UA regression length and used by the unit tests below.
 pub(crate) const STABLE_ID_LEN: usize = 16;
+
+/// v13 (Task #37) — minimum stable-ID value length.
+///
+/// C++: `kStableIdMinLen = 8` (`p7s_circuit.h`).
+pub(crate) const STABLE_ID_MIN_LEN: usize = 8;
+
+/// v13 (Task #37) — maximum stable-ID value length.
+///
+/// C++: `kStableIdMaxLen = 37` (`p7s_circuit.h`).
+pub(crate) const STABLE_ID_MAX_LEN: usize = 37;
 
 /// SHA block count for the per-app nullifier preimage (2 blocks for 65 raw bytes).
 pub(crate) const NULLIFIER_SHA_BLOCKS: usize = 2;
@@ -92,44 +103,59 @@ pub(crate) fn build_enroll_commit_sha_witness(
     compute_sha_witness(&raw, ENROLL_COMMIT_SHA_BLOCKS)
 }
 
-/// Build the enroll-nullifier SHA witness.
+/// Build the enroll-nullifier SHA witness (v13, variable length).
 ///
-/// Preimage: `[0x02 | stable_id | ENROLL_DOMAIN_SEP]`, 33 bytes total → 1 SHA block.
+/// Preimage: `[0x02 | stable_id[0..L] | ENROLL_DOMAIN_SEP]`, `1 + L +
+/// 16` bytes total (L in `[8, 37]`) → always 1 SHA block. No
+/// length-prefix byte, so for `L == 16` the preimage is byte-identical
+/// to the v12 fixed-length construction.
 ///
 /// `stable_id` is sourced from cert_tbs at
 /// `cert_tbs[subject_sn_offset_in_tbs + SUBJECT_SN_ANCHOR_LEN ..
-/// + SUBJECT_SN_ANCHOR_LEN + STABLE_ID_LEN]` (the same routed window
-/// invariant 12 binds via `sn_window`).
+/// + SUBJECT_SN_ANCHOR_LEN + L]` (the same routed window invariant 12
+/// binds via `sn_window`).
 ///
-/// C++: `p7s_zk.cc:2562-2571`.
-pub(crate) fn build_enroll_nullifier_sha_witness(
-    stable_id: &[u8; STABLE_ID_LEN],
-) -> ShaWitness {
-    let mut raw = [0u8; 1 + STABLE_ID_LEN + ENROLL_DOMAIN_SEP.len()];
+/// C++: `p7s_zk.cc` v13 invariant-12 witness fill.
+pub(crate) fn build_enroll_nullifier_sha_witness(stable_id: &[u8]) -> ShaWitness {
+    debug_assert!(
+        stable_id.len() <= STABLE_ID_MAX_LEN,
+        "stable_id exceeds STABLE_ID_MAX_LEN"
+    );
+    let l = stable_id.len();
+    let mut raw = [0u8; 1 + STABLE_ID_MAX_LEN + ENROLL_DOMAIN_SEP.len()];
     raw[0] = DS_TAG_ENROLL_NULLIFIER;
-    raw[1..1 + STABLE_ID_LEN].copy_from_slice(stable_id);
-    raw[1 + STABLE_ID_LEN..].copy_from_slice(&ENROLL_DOMAIN_SEP);
-    compute_sha_witness(&raw, ENROLL_NULLIFIER_SHA_BLOCKS)
+    raw[1..1 + l].copy_from_slice(stable_id);
+    raw[1 + l..1 + l + ENROLL_DOMAIN_SEP.len()].copy_from_slice(&ENROLL_DOMAIN_SEP);
+    compute_sha_witness(
+        &raw[..1 + l + ENROLL_DOMAIN_SEP.len()],
+        ENROLL_NULLIFIER_SHA_BLOCKS,
+    )
 }
 
-/// Extract `stable_id` from a `cert_tbs` slice at the given subject-SN offset.
+/// Extract the variable-length `stable_id` from a `cert_tbs` slice.
 ///
-/// `subject_sn_offset_in_tbs` points at the SN anchor's first byte; the stable-ID
-/// is the 16 bytes that immediately follow the 9-byte anchor.
+/// `subject_sn_offset_in_tbs` points at the 9-byte SN anchor's first
+/// byte; the PrintableString length `L` lives in anchor byte 8
+/// (`cert_tbs[subject_sn_offset_in_tbs + 8]`), and the stable-ID value
+/// is the `L` bytes immediately after the anchor.
 ///
-/// Returns `None` if the offset/length combination would read past `cert_tbs`.
+/// Returns `None` if `L` is outside the v13 range `[STABLE_ID_MIN_LEN,
+/// STABLE_ID_MAX_LEN]` or the offset/length would read past `cert_tbs`.
 pub(crate) fn extract_stable_id(
     cert_tbs: &[u8],
     subject_sn_offset_in_tbs: usize,
-) -> Option<[u8; STABLE_ID_LEN]> {
+) -> Option<&[u8]> {
+    let len_idx = subject_sn_offset_in_tbs.checked_add(8)?;
+    let l = *cert_tbs.get(len_idx)? as usize;
+    if !(STABLE_ID_MIN_LEN..=STABLE_ID_MAX_LEN).contains(&l) {
+        return None;
+    }
     let start = subject_sn_offset_in_tbs.checked_add(SUBJECT_SN_ANCHOR_LEN)?;
-    let end = start.checked_add(STABLE_ID_LEN)?;
+    let end = start.checked_add(l)?;
     if end > cert_tbs.len() {
         return None;
     }
-    let mut out = [0u8; STABLE_ID_LEN];
-    out.copy_from_slice(&cert_tbs[start..end]);
-    Some(out)
+    Some(&cert_tbs[start..end])
 }
 
 #[cfg(test)]
@@ -171,15 +197,34 @@ mod tests {
 
     #[test]
     fn enroll_nullifier_digest_matches_concat_sha256() {
-        let stable_id = [0x11u8; STABLE_ID_LEN];
-        let mut expected_preimage = vec![DS_TAG_ENROLL_NULLIFIER];
-        expected_preimage.extend_from_slice(&stable_id);
-        expected_preimage.extend_from_slice(&ENROLL_DOMAIN_SEP);
-        let expected = sha256_be(&expected_preimage);
+        // Variable-length (v13): cover the min, the legacy-16, and the
+        // max — each must hash to a plain SHA-256 of the concatenated
+        // preimage and stay within a single block.
+        for l in [STABLE_ID_MIN_LEN, STABLE_ID_LEN, STABLE_ID_MAX_LEN] {
+            let stable_id = vec![0x11u8; l];
+            let mut expected_preimage = vec![DS_TAG_ENROLL_NULLIFIER];
+            expected_preimage.extend_from_slice(&stable_id);
+            expected_preimage.extend_from_slice(&ENROLL_DOMAIN_SEP);
+            let expected = sha256_be(&expected_preimage);
 
-        let sw = build_enroll_nullifier_sha_witness(&stable_id);
-        assert_eq!(sw.digest, expected);
-        assert_eq!(sw.numb, 1);
+            let sw = build_enroll_nullifier_sha_witness(&stable_id);
+            assert_eq!(sw.digest, expected, "L={l}");
+            assert_eq!(sw.numb, 1, "L={l}");
+        }
+    }
+
+    #[test]
+    fn enroll_nullifier_len_16_is_v12_byte_identical() {
+        // No length-prefix byte → the L=16 v13 preimage equals the v12
+        // fixed-length one. Existing UA enrollments carry forward.
+        let id16 = [0x11u8; STABLE_ID_LEN];
+        let mut v12_preimage = vec![DS_TAG_ENROLL_NULLIFIER];
+        v12_preimage.extend_from_slice(&id16);
+        v12_preimage.extend_from_slice(&ENROLL_DOMAIN_SEP);
+        assert_eq!(
+            build_enroll_nullifier_sha_witness(&id16).digest,
+            sha256_be(&v12_preimage)
+        );
     }
 
     #[test]
@@ -189,22 +234,34 @@ mod tests {
     }
 
     #[test]
-    fn extract_stable_id_returns_window_after_anchor() {
+    fn extract_stable_id_returns_variable_window_after_anchor() {
+        // L is read from anchor byte 8. Exercise a 22-byte value.
+        let l = 22usize;
         let mut cert_tbs = [0u8; 64];
-        // Place a recognizable pattern at offsets 5+9..5+9+16 = 14..30.
-        for i in 0..STABLE_ID_LEN {
+        cert_tbs[5 + 8] = l as u8; // anchor[8] = L
+        for i in 0..l {
             cert_tbs[5 + SUBJECT_SN_ANCHOR_LEN + i] = (i as u8) + 0x40;
         }
         let extracted = extract_stable_id(&cert_tbs, 5).unwrap();
-        for i in 0..STABLE_ID_LEN {
+        assert_eq!(extracted.len(), l);
+        for i in 0..l {
             assert_eq!(extracted[i], (i as u8) + 0x40);
         }
     }
 
     #[test]
     fn extract_stable_id_rejects_oob_offset() {
-        let cert_tbs = [0u8; 24];
-        // offset 5 + 9 + 16 = 30 > 24 → rejected
+        let mut cert_tbs = [0u8; 24];
+        cert_tbs[5 + 8] = 16; // valid L, but 5 + 9 + 16 = 30 > 24
+        assert!(extract_stable_id(&cert_tbs, 5).is_none());
+    }
+
+    #[test]
+    fn extract_stable_id_rejects_out_of_range_length() {
+        let mut cert_tbs = [0u8; 64];
+        cert_tbs[5 + 8] = 7; // below STABLE_ID_MIN_LEN
+        assert!(extract_stable_id(&cert_tbs, 5).is_none());
+        cert_tbs[5 + 8] = 38; // above STABLE_ID_MAX_LEN
         assert!(extract_stable_id(&cert_tbs, 5).is_none());
     }
 }

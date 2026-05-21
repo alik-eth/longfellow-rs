@@ -1,10 +1,13 @@
 //! Pre-compiled circuit-bytes asset surface.
 //!
-//! Single source of truth for the v12 p7s circuit binary across all
+//! Single source of truth for the p7s circuit binary across all
 //! consumers. The bytes were captured by the C++ vendor's
 //! `p7s_dump_circuits` extern-C entry (Task #95 work-item 0); the
 //! committed file is `crates/longfellow/circuits/p7s_circuit_v12.bin.zst`
-//! (508 KB compressed, raw sha256 `dbbb7b53...e2b4`).
+//! (511 KB compressed, raw sha256 `00278352...624d`). As of v13
+//! (Task #37 — variable-length serialNumber) the asset is the v13
+//! circuit; the `_v12` filename/symbol names are retained to avoid
+//! churn across consumers.
 //!
 //! Phase 2 redirects (#78-#82) consume this asset instead of relying on
 //! `longfellow-sys`'s C++ static-data lookup. Phase 3 deletes the FFI

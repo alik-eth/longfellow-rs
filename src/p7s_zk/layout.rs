@@ -9,9 +9,12 @@
 //! Any change here must be matched in both the C++ source and the
 //! pre-compiled circuit. Treat as a frozen ABI surface.
 
-/// Wire-format schema version baked into both blobs. v12 is the
-/// holder-bound nullifier schema shipped 2026-04-28.
-pub const BLOB_SCHEMA_VERSION: u32 = 12;
+/// Wire-format schema version baked into both blobs. v13 (Task #37)
+/// is the variable-length-serialNumber schema; the wire layout is
+/// byte-identical to v12 (holder-bound nullifier, 2026-04-28) — only
+/// this version u32 distinguishes them, so v12 and v13 blobs are
+/// mutually rejected at the parser version gate.
+pub const BLOB_SCHEMA_VERSION: u32 = 13;
 
 // ---- signed_content / context bounds ----
 
@@ -79,12 +82,23 @@ pub const SIGNED_ATTRS_MD_WINDOW_LEN: usize =
 
 // ---- stable_id (invariant 7 helper) ----
 
-/// X.520 serialNumber stable-ID byte length (DIIA RNOKPP: `TINUA-` + 10 digits).
+/// Legacy DIIA RNOKPP stable-ID length (`TINUA-` + 10 digits = 16).
+/// Retained as the canonical UA regression length; v13 (Task #37)
+/// accepts any length in `[STABLE_ID_MIN_LEN, STABLE_ID_MAX_LEN]`.
 pub const STABLE_ID_LEN: usize = 16;
+/// v13 (Task #37) — minimum stable-ID value length. Mirrors the
+/// circuit `kStableIdMinLen`.
+pub const STABLE_ID_MIN_LEN: usize = 8;
+/// v13 (Task #37) — maximum stable-ID value length; keeps the
+/// enroll_nullifier SHA-256 preimage (`1 + L + 16`) within a single
+/// block. Mirrors the circuit `kStableIdMaxLen`.
+pub const STABLE_ID_MAX_LEN: usize = 37;
 /// 9-byte X.520 serialNumber attribute DER prefix.
 pub const SUBJECT_SN_ANCHOR_LEN: usize = 9;
-/// Anchor + value = 9 + 16 = 25 bytes.
-pub const SUBJECT_SN_WINDOW_LEN: usize = SUBJECT_SN_ANCHOR_LEN + STABLE_ID_LEN;
+/// Routed serialNumber window: anchor + max value = 9 + 37 = 46 bytes.
+/// The circuit routes the window at the max size regardless of the
+/// actual value length `L`, which lives in anchor byte 8.
+pub const SUBJECT_SN_WINDOW_LEN: usize = SUBJECT_SN_ANCHOR_LEN + STABLE_ID_MAX_LEN;
 
 // ---- v12 nullifier / enroll outputs ----
 

@@ -66,6 +66,10 @@ fn build_valid_witness_blob() -> Vec<u8> {
     cert_tbs[..SPKI_PREFIX_LEN].copy_from_slice(&SPKI_P256_PREFIX);
     cert_tbs[SPKI_PREFIX_LEN] = 0x04; // SEC1 uncompressed-point tag
     cert_tbs[100..100 + SUBJECT_SN_ANCHOR_LEN].copy_from_slice(&SUBJECT_SN_ANCHOR);
+    // v13 (Task #37): the serialNumber value (L = anchor[8] = 16 bytes,
+    // at cert_tbs[109..125]) must be a valid ETSI EN 319 412-1
+    // natural-person identifier — an `[A-Z]{5}-` prefix.
+    cert_tbs[109..109 + 16].copy_from_slice(b"TINUA-1234567890");
     blob.extend_from_slice(&cert_tbs);
 
     // cert_sig (r, s).

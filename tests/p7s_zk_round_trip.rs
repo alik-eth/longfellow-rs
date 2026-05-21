@@ -76,8 +76,8 @@ fn p7s_v12_round_trip() {
         .prove(WITNESS_BLOB, PUBLIC_BLOB)
         .expect("prover succeeded");
     assert!(!proof_bytes.is_empty(), "proof bytes non-empty");
-    // Schema version u32 LE prefix is the first 4 bytes.
-    assert_eq!(proof_bytes[0], 12, "schema version u32 byte 0 = 12");
+    // Schema version u32 LE prefix is the first 4 bytes (v13, Task #37).
+    assert_eq!(proof_bytes[0], 13, "schema version u32 byte 0 = 13");
     assert_eq!(proof_bytes[1], 0, "schema version u32 byte 1 = 0");
 
     // 2. Verify.
