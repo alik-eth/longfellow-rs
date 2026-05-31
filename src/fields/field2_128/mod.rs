@@ -21,7 +21,7 @@ use core::{
 use core::sync::atomic::{AtomicU8, Ordering};
 use serde::{Deserialize, Serialize, de::Error as _, ser::Error as _};
 use sha2::{Digest, Sha256};
-#[cfg(all(target_arch = "aarch64", feature = "std"))]
+#[cfg(target_arch = "aarch64")]
 use std::arch::is_aarch64_feature_detected;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
@@ -381,12 +381,12 @@ impl ConditionallySelectable for Field2_128 {
     }
 }
 
-#[cfg(all(target_arch = "aarch64", feature = "std"))]
+#[cfg(target_arch = "aarch64")]
 mod backend_aarch64;
 mod backend_bit_slicing;
 #[cfg(test)]
 mod backend_naive_loop;
-#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "std"))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod backend_x86;
 mod constants;
 mod extend;
@@ -431,11 +431,11 @@ impl CachedFeatureFlag {
     }
 }
 
-#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "std"))]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 static FEATURES: CachedFeatureFlag = CachedFeatureFlag::new(|| {
     is_x86_feature_detected!("sse2") && is_x86_feature_detected!("pclmulqdq")
 });
-#[cfg(all(target_arch = "aarch64", feature = "std"))]
+#[cfg(target_arch = "aarch64")]
 static FEATURES: CachedFeatureFlag = CachedFeatureFlag::new(|| {
     is_aarch64_feature_detected!("neon") && is_aarch64_feature_detected!("aes")
 });
@@ -445,11 +445,11 @@ static FEATURES: CachedFeatureFlag = CachedFeatureFlag::new(|| {
 /// This dispatches to an appropriate implementation depending on CPU support, or a fallback
 /// implementation.
 fn galois_multiply(x: u128, y: u128) -> u128 {
-    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "std"))]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if FEATURES.get() {
         return unsafe { backend_x86::galois_multiply(x, y) };
     }
-    #[cfg(all(target_arch = "aarch64", feature = "std"))]
+    #[cfg(target_arch = "aarch64")]
     if FEATURES.get() {
         return unsafe { backend_aarch64::galois_multiply(x, y) };
     }
@@ -461,11 +461,11 @@ fn galois_multiply(x: u128, y: u128) -> u128 {
 /// This dispatches to an appropriate implementation depending on CPU support, or a fallback
 /// implementation.
 fn galois_square(x: u128) -> u128 {
-    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "std"))]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if FEATURES.get() {
         return unsafe { backend_x86::galois_square(x) };
     }
-    #[cfg(all(target_arch = "aarch64", feature = "std"))]
+    #[cfg(target_arch = "aarch64")]
     if FEATURES.get() {
         return unsafe { backend_aarch64::galois_square(x) };
     }

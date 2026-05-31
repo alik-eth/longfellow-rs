@@ -5,26 +5,25 @@ edition = "2024"
 license = "MPL-2.0"
 
 # Feature matrix (see README.md):
-#   default  = prover + verifier + std (host build, full functionality)
-#   verifier = verifier-only path (no prover deps, no_std + alloc compatible)
+#   default  = prover + verifier (host build, full functionality)
+#   verifier = verifier-only path (no prover deps)
 #   prover   = prover-side modules + ruzstd + rand + getrandom
-#   std      = std-library imports (off → no_std + alloc only)
 #   wasm     = wasm-bindgen surface for browser builds
 #   mobile   = uniffi scaffolding for mobile builds
+#
+# The crate is always `std`; the no_std / SP1 / riscv32 build mode was abandoned.
 [features]
-default = ["prover", "verifier", "std"]
+default = ["prover", "verifier"]
 verifier = []
-prover = ["dep:rand", "dep:getrandom", "dep:ruzstd", "dep:ciborium", "dep:ciborium-ll", "dep:x509-cert", "x509-cert/hazmat"]
-std = ["x509-cert?/std"]
+prover = ["dep:rand", "dep:getrandom", "dep:ruzstd", "dep:ciborium", "dep:ciborium-ll", "dep:x509-cert", "x509-cert/hazmat", "x509-cert/std"]
 wasm = ["dep:wasm-bindgen"]
 mobile = ["dep:uniffi"]
 
 [dependencies]
-# Verifier-path deps stay no_std-friendly (`default-features = false` where
-# applicable) so the SP1 / `riscv32im-unknown-none-elf` build stays green under
-# `--features verifier --no-default-features`. CBOR/X.509 parsing live in the
-# prover-only `mdoc/` and `p7s/` parsers, so `ciborium`/`ciborium-ll`/`x509-cert`
-# are gated through the `prover` feature.
+# CBOR/X.509 parsing live in the prover-only `mdoc/` and `p7s/` parsers, so
+# `ciborium`/`ciborium-ll`/`x509-cert` are gated through the `prover` feature.
+# `default-features = false` is retained on several deps where it builds cleanly
+# and keeps the dependency surface minimal.
 aes = { version = "0.8.4", default-features = false }
 anyhow = { version = "1", default-features = false }
 byteorder = { version = "1.5.0", default-features = false }
