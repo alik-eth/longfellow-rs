@@ -13,12 +13,16 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-// wasm-harness/ -> longfellow/ -> crates/ -> workspace root, then target/.
+// Standalone repo: wasm-harness/ -> crate root, then target/.
+// (Was ../../../target in the zk-eidas monorepo; this crate is now its own repo.)
+import { existsSync } from 'node:fs';
 const here = dirname(fileURLToPath(import.meta.url));
-const wasmPath = join(
-  here,
-  '../../../target/wasm32-wasip1/release/examples/wasm_p7s_mem.wasm',
-);
+const rel = 'target/wasm32-wasip1/release/examples/wasm_p7s_mem.wasm';
+// Prefer the standalone layout (one level up); fall back to the old monorepo
+// layout (three levels up) so the harness works in either checkout.
+const wasmPath = [join(here, '..', rel), join(here, '../../..', rel)].find(
+  existsSync,
+) ?? join(here, '..', rel);
 
 const wasi = new WASI({ version: 'preview1', args: ['wasm_p7s_mem'], env: {} });
 
