@@ -13,7 +13,8 @@ mod tests {
         fields::{ProofFieldElement, field2_128::Field2_128, fieldp128::FieldP128},
         test_vector::{CircuitTestVector, load_mac, load_rfc},
         zk_one_circuit::{
-            prover::{Proof, Prover},
+            proof::Proof,
+            prover::Prover,
             verifier::Verifier,
         },
     };

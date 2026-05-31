@@ -7,7 +7,7 @@ use crate::{
     ligero::{
         LigeroParameters,
         merkle::{Node, Root},
-        prover::LigeroProof,
+        proof::LigeroProof,
         tableau::TableauLayout,
     },
     sumcheck::SumcheckProof,

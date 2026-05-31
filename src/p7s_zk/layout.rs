@@ -533,8 +533,10 @@ mod tests {
 
     #[test]
     fn fill_hash_public_pre_mac_context_hash_byte_bit_ordering() {
-        // context_hash byte 31 controls wires [248..256) within the
-        // 256-wire context_hash region (which starts at wire 1).
+        // context_hash is written with `push_target_be` (matches
+        // FlatSHA256Circuit `assert_hash`), so byte 31 (the last digest
+        // byte) occupies the LOW region wires [0..8) → buf[1..9]; the
+        // bits within the byte are LSB-first.
         // 0xA5 = 0b1010_0101 → LSB-first bits: 1,0,1,0,0,1,0,1.
         let mut pub_ = dummy_public();
         pub_.context_hash = [0; 32];
@@ -542,7 +544,7 @@ mod tests {
         let mut buf: Vec<Field2_128> = vec![Field2_128::ZERO; HASH_PUB_TOTAL];
         let mut view = split_hash_statement(&mut buf);
         fill_hash_public_pre_mac(&mut view, &pub_);
-        let base = 1 + 248;
+        let base = 1;
         let expected = [1u8, 0, 1, 0, 0, 1, 0, 1];
         for (i, &b) in expected.iter().enumerate() {
             let want = if b == 1 { Field2_128::ONE } else { Field2_128::ZERO };
